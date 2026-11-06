@@ -25,6 +25,22 @@ type Client = {
 };
 type InvoiceRow = { id: string; client_id: string; reference_date: string; attachment_url: string | null; notes: string | null };
 
+/** Fatura extraída do PDF do e-mail e aguardando importação. Não aparece como lista: só faz o avatar do cliente pulsar. */
+type PendingImport = {
+  id: string;
+  client_id: string;
+  reference_date: string;
+  consumption_kw: number;
+  price_kw: number;
+  price_kw_exact: string | null;
+  public_lighting: number;
+  interest_fine: number;
+  distributor_invoice: number;
+  due_date: string | null;
+  attachment_url: string | null;
+  source_pdf_filename: string | null;
+};
+
 type Invoice = {
   id: string;
   client_id: string;
@@ -89,15 +105,22 @@ function withPaymentTag(
 }
 
 async function fetchFaturasPage() {
-  const [c, i] = await Promise.all([
+  const [c, i, p] = await Promise.all([
     supabase.from("clients").select("*").order("created_at", { ascending: true }),
     supabase.from("invoices").select("id,client_id,reference_date,attachment_url,notes"),
+    supabase
+      .from("pending_invoice_imports")
+      .select("id,client_id,reference_date,consumption_kw,price_kw,price_kw_exact,public_lighting,interest_fine,distributor_invoice,due_date,attachment_url,source_pdf_filename")
+      .eq("status", "pending")
+      .order("reference_date", { ascending: true }),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
   if (i.error) throw new Error(i.error.message || "Erro ao carregar faturas");
   return {
     clients: (c.data ?? []) as Client[],
     invoices: (i.data ?? []) as InvoiceRow[],
+    // A tabela de pendentes só existe após aplicar a migration; sem ela, a página segue sem pulsar.
+    pending: (p.error ? [] : (p.data ?? [])) as PendingImport[],
   };
 }
 
@@ -156,6 +179,12 @@ function FaturasPage() {
   const shown = showInactive ? inactive : active;
 
   const invCount = (id: string) => data.invoices.filter((i) => i.client_id === id).length;
+
+  // Uma pendência por cliente (a mais antiga, se houver mais de uma).
+  const pendingByClient = new Map<string, PendingImport>();
+  for (const p of data.pending) {
+    if (!pendingByClient.has(p.client_id)) pendingByClient.set(p.client_id, p);
+  }
 
   async function toggleActive(c: Client) {
     const { error: err } = await supabase.from("clients").update({ active: !c.active }).eq("id", c.id);
@@ -220,8 +249,15 @@ function FaturasPage() {
             <div className="mb-3 flex w-full items-start justify-between text-left">
               <div className="flex items-center gap-2.5">
                 <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm"
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm ${
+                    pendingByClient.has(c.id) ? "animate-pulse ring-2 ring-amber-400" : ""
+                  }`}
                   style={{ backgroundColor: c.color }}
+                  title={
+                    pendingByClient.has(c.id)
+                      ? `Fatura de ${monthLabelFromISO(pendingByClient.get(c.id)!.reference_date)} aguardando importação — clique em Lançar`
+                      : undefined
+                  }
                 >
                   {initial(c.name)}
                 </div>
@@ -307,8 +343,20 @@ function FaturasPage() {
           }}
         />
       )}
-      {invoiceFor && <InvoiceDialog client={invoiceFor} onClose={() => setInvoiceFor(null)} />}
-      {historyFor && <HistoryDialog client={historyFor} onClose={() => setHistoryFor(null)} />}
+      {invoiceFor && (
+        <InvoiceDialog
+          client={invoiceFor}
+          pending={pendingByClient.get(invoiceFor.id) ?? null}
+          onClose={() => setInvoiceFor(null)}
+        />
+      )}
+      {historyFor && (
+        <HistoryDialog
+          client={historyFor}
+          pending={pendingByClient.get(historyFor.id) ?? null}
+          onClose={() => setHistoryFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -462,10 +510,12 @@ function ClientDialog({ client, open, onClose }: { client: Client | null; open: 
 function InvoiceDialog({
   client,
   invoice,
+  pending,
   onClose,
 }: {
   client: Client;
   invoice?: Invoice;
+  pending?: PendingImport | null;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -503,6 +553,32 @@ function InvoiceDialog({
       });
     }
   }, [invoice, client.public_lighting_value]);
+
+  // Lançamento novo com fatura aguardando importação: pré-preenche com os dados extraídos do PDF.
+  useEffect(() => {
+    if (invoice || !pending) return;
+    const { value_without_plant, client_pays } = calculateValues(
+      String(pending.consumption_kw),
+      pending.price_kw_exact || String(pending.price_kw),
+      String(pending.public_lighting),
+      String(pending.interest_fine),
+      pending.reference_date.slice(0, 7),
+    );
+    setF({
+      reference_month: pending.reference_date.slice(0, 7),
+      consumption_kw: String(pending.consumption_kw),
+      price_kw: pending.price_kw_exact || String(pending.price_kw),
+      public_lighting: String(pending.public_lighting),
+      interest_fine: String(pending.interest_fine),
+      value_without_plant,
+      client_pays,
+      distributor_invoice: String(pending.distributor_invoice),
+      notes: "",
+      attachment_url: pending.attachment_url ?? "",
+      payment_status: "pago",
+      due_date: pending.due_date ?? "",
+    });
+  }, [pending, invoice]);
 
   const parseNum = (value: string | number) => {
     if (typeof value === "number") return Number.isFinite(value) ? value : 0;
@@ -638,6 +714,13 @@ function InvoiceDialog({
       : await supabase.from("invoices").insert(payload);
     setSaving(false);
     if (error) return toast.error(error.message);
+    if (!invoice && pending) {
+      const { error: pendingError } = await supabase
+        .from("pending_invoice_imports")
+        .update({ status: "imported" })
+        .eq("id", pending.id);
+      if (pendingError) toast.error("Fatura lançada, mas não consegui marcar a pendência como importada");
+    }
     toast.success(invoice ? "Fatura atualizada" : "Fatura lançada");
     qc.invalidateQueries({ queryKey: ["faturas-page"] });
     qc.invalidateQueries({ queryKey: ["relatorio-page"] });
@@ -817,7 +900,15 @@ function InvoiceDialog({
   );
 }
 
-function HistoryDialog({ client, onClose }: { client: Client; onClose: () => void }) {
+function HistoryDialog({
+  client,
+  pending,
+  onClose,
+}: {
+  client: Client;
+  pending?: PendingImport | null;
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ["client-invoices", client.id],
@@ -953,7 +1044,11 @@ function HistoryDialog({ client, onClose }: { client: Client; onClose: () => voi
         </DialogContent>
       </Dialog>
       {launching && (
-        <InvoiceDialog client={client} onClose={() => { setLaunching(false); qc.invalidateQueries({ queryKey: ["client-invoices", client.id] }); }} />
+        <InvoiceDialog
+          client={client}
+          pending={pending ?? null}
+          onClose={() => { setLaunching(false); qc.invalidateQueries({ queryKey: ["client-invoices", client.id] }); }}
+        />
       )}
       {editing && (
         <InvoiceDialog
