@@ -346,6 +346,74 @@ export type Database = {
           },
         ]
       }
+      pending_invoice_imports: {
+        Row: {
+          attachment_url: string | null
+          client_id: string
+          consumption_kw: number
+          created_at: string
+          distributor_invoice: number
+          due_date: string | null
+          id: string
+          interest_fine: number
+          price_kw: number
+          price_kw_exact: string | null
+          public_lighting: number
+          reference_date: string
+          source_gmail_message_id: string | null
+          source_pdf_filename: string | null
+          status: string
+          uc_number: string
+          updated_at: string
+        }
+        Insert: {
+          attachment_url?: string | null
+          client_id: string
+          consumption_kw?: number
+          created_at?: string
+          distributor_invoice?: number
+          due_date?: string | null
+          id?: string
+          interest_fine?: number
+          price_kw?: number
+          price_kw_exact?: string | null
+          public_lighting?: number
+          reference_date: string
+          source_gmail_message_id?: string | null
+          source_pdf_filename?: string | null
+          status?: string
+          uc_number: string
+          updated_at?: string
+        }
+        Update: {
+          attachment_url?: string | null
+          client_id?: string
+          consumption_kw?: number
+          created_at?: string
+          distributor_invoice?: number
+          due_date?: string | null
+          id?: string
+          interest_fine?: number
+          price_kw?: number
+          price_kw_exact?: string | null
+          public_lighting?: number
+          reference_date?: string
+          source_gmail_message_id?: string | null
+          source_pdf_filename?: string | null
+          status?: string
+          uc_number?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pending_invoice_imports_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plant_config: {
         Row: {
           id: number
