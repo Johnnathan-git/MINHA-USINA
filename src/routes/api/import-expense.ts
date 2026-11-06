@@ -58,13 +58,20 @@ export const Route = createFileRoute('/api/import-expense')({
 
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server')
 
-        // Já lançada? Não duplica.
+        // Já lançada? Não duplica. A comparação é pelo mês, não pelo dia:
+        // o lançamento manual guarda o dia em que foi criado, e o Fluxo
+        // de Caixa agrupa despesas por mês (reference_date yyyy-mm).
+        const monthStart = `${referenceDate.slice(0, 7)}-01`
+        const [y, m] = referenceDate.slice(0, 7).split('-').map(Number)
+        const next = new Date(y, m, 1)
+        const monthEnd = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-01`
         const { data: existing, error: existingError } = await supabaseAdmin
           .from('expenses')
           .select('id')
           .eq('category', category)
           .eq('description', description)
-          .eq('reference_date', referenceDate)
+          .gte('reference_date', monthStart)
+          .lt('reference_date', monthEnd)
           .maybeSingle()
         if (existingError) {
           return Response.json({ error: existingError.message }, { status: 500 })
