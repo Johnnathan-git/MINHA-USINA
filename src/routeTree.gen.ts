@@ -20,6 +20,7 @@ import { Route as AppFluxoCaixaRouteImport } from './routes/_app.fluxo-caixa'
 import { Route as AppInventarioRouteImport } from './routes/_app.inventario'
 import { Route as AppRelatorioRouteImport } from './routes/_app.relatorio'
 import { Route as AppResultadoRouteImport } from './routes/_app.resultado'
+import { Route as ApiImportExpenseRouteImport } from './routes/api/import-expense'
 import { Route as ApiImportPendingRouteImport } from './routes/api/import-pending'
 import { Route as ApiPublicDownloadRouteImport } from './routes/api/public/download'
 
@@ -77,6 +78,11 @@ const AppResultadoRoute = AppResultadoRouteImport.update({
   path: '/resultado',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiImportExpenseRoute = ApiImportExpenseRouteImport.update({
+  id: '/api/import-expense',
+  path: '/api/import-expense',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiImportPendingRoute = ApiImportPendingRouteImport.update({
   id: '/api/import-pending',
   path: '/api/import-pending',
@@ -99,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/inventario': typeof AppInventarioRoute
   '/relatorio': typeof AppRelatorioRoute
   '/resultado': typeof AppResultadoRoute
+  '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
 }
@@ -112,6 +119,7 @@ export interface FileRoutesByTo {
   '/inventario': typeof AppInventarioRoute
   '/relatorio': typeof AppRelatorioRoute
   '/resultado': typeof AppResultadoRoute
+  '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/': typeof AppIndexRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
@@ -128,6 +136,7 @@ export interface FileRoutesById {
   '/_app/inventario': typeof AppInventarioRoute
   '/_app/relatorio': typeof AppRelatorioRoute
   '/_app/resultado': typeof AppResultadoRoute
+  '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/_app/': typeof AppIndexRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
@@ -145,6 +154,7 @@ export interface FileRouteTypes {
     | '/inventario'
     | '/relatorio'
     | '/resultado'
+    | '/api/import-expense'
     | '/api/import-pending'
     | '/api/public/download'
   fileRoutesByTo: FileRoutesByTo
@@ -158,6 +168,7 @@ export interface FileRouteTypes {
     | '/inventario'
     | '/relatorio'
     | '/resultado'
+    | '/api/import-expense'
     | '/api/import-pending'
     | '/'
     | '/api/public/download'
@@ -173,6 +184,7 @@ export interface FileRouteTypes {
     | '/_app/inventario'
     | '/_app/relatorio'
     | '/_app/resultado'
+    | '/api/import-expense'
     | '/api/import-pending'
     | '/_app/'
     | '/api/public/download'
@@ -182,6 +194,7 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiImportExpenseRoute: typeof ApiImportExpenseRoute
   ApiImportPendingRoute: typeof ApiImportPendingRoute
   ApiPublicDownloadRoute: typeof ApiPublicDownloadRoute
 }
@@ -265,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppResultadoRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/import-expense': {
+      id: '/api/import-expense'
+      path: '/api/import-expense'
+      fullPath: '/api/import-expense'
+      preLoaderRoute: typeof ApiImportExpenseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/import-pending': {
       id: '/api/import-pending'
       path: '/api/import-pending'
@@ -310,6 +330,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiImportExpenseRoute: ApiImportExpenseRoute,
   ApiImportPendingRoute: ApiImportPendingRoute,
   ApiPublicDownloadRoute: ApiPublicDownloadRoute,
 }
