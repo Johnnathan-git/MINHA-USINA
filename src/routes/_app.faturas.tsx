@@ -241,14 +241,29 @@ function FaturasPage() {
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
+  const [waPdf, setWaPdf] = useState<{ title: string; fileName: string; url: string | null; error: string | null; loading: boolean } | null>(null);
 
-  /** Abre o PDF da fatura anexada numa nova aba, pelo proxy do app: a URL leva só o caminho do arquivo, nada do Supabase nela, então o Chrome não bloqueia. */
-  function viewWaAttachment(path: string) {
+  /** Abre o PDF da fatura num visualizador dentro do app: busca por POST (o caminho vai no corpo, fora da URL) e exibe num iframe. O Chrome do usuário bloqueia abrir nova aba com ".pdf" na URL. */
+  async function openWaPdf(title: string, path: string) {
     const fileName = path.split("/").pop() || "fatura.pdf";
-    window.open(
-      `/api/public/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(fileName)}&disposition=inline`,
-      "_blank",
-    );
+    setWaPdf({ title, fileName, url: null, error: null, loading: true });
+    try {
+      const res = await fetch("/api/public/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setWaPdf((v) => (v ? { ...v, url, loading: false } : v));
+    } catch (e) {
+      setWaPdf((v) => (v ? { ...v, error: "Não foi possível carregar o PDF. " + ((e as Error)?.message || ""), loading: false } : v));
+    }
+  }
+  function closeWaPdf() {
+    if (waPdf?.url) URL.revokeObjectURL(waPdf.url);
+    setWaPdf(null);
   }
 
   if (isLoading) {
@@ -493,7 +508,7 @@ function FaturasPage() {
                 <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
                 {p.attachment_path ? (
-                  <Button variant="outline" size="sm" onClick={() => viewWaAttachment(p.attachment_path!)} className="gap-1">
+                  <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${p.client_name}`, p.attachment_path!)} className="gap-1">
                     <Paperclip className="h-3.5 w-3.5" />
                     Ver fatura (PDF)
                   </Button>
@@ -552,7 +567,7 @@ function FaturasPage() {
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
                       {w.attachment_path ? (
-                        <Button variant="outline" size="sm" onClick={() => viewWaAttachment(w.attachment_path)} className="gap-1">
+                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path)} className="gap-1">
                           <Paperclip className="h-3.5 w-3.5" />
                           Ver fatura (PDF)
                         </Button>
@@ -571,6 +586,29 @@ function FaturasPage() {
               ))}
             </ul>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Visualizador do PDF da fatura — dentro do app, sem abrir nova aba. */}
+      <Dialog open={waPdf !== null} onOpenChange={(o) => { if (!o) closeWaPdf(); }}>
+        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{waPdf?.title ?? "Fatura"}</DialogTitle>
+          </DialogHeader>
+          {waPdf?.loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" /> Carregando fatura...
+            </div>
+          ) : waPdf?.error ? (
+            <p className="text-sm text-red-500">{waPdf.error}</p>
+          ) : waPdf?.url ? (
+            <div className="space-y-3">
+              <iframe src={waPdf.url} title={waPdf.title} className="h-[70vh] w-full rounded-lg border border-border bg-white" />
+              <a href={waPdf.url} download={waPdf.fileName} className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline">
+                <Paperclip className="h-3.5 w-3.5" /> Baixar PDF
+              </a>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
