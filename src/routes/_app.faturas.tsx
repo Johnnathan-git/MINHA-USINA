@@ -163,6 +163,43 @@ async function fetchFaturasPage() {
   };
 }
 
+/** Seletor de mês/ano com dropdowns — o calendário nativo do campo mês não mostra 2027 de forma óbvia. */
+const MONTH_NAMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const YEAR_OPTIONS = Array.from({ length: 16 }, (_, i) => 2020 + i); // 2020–2035
+function MonthYearSelect({ value, onChange, monthClassName, yearClassName }: {
+  value: string;
+  onChange: (v: string) => void;
+  monthClassName?: string;
+  yearClassName?: string;
+}) {
+  const year = value.slice(0, 4);
+  const month = value.slice(5, 7);
+  return (
+    <div className="flex gap-2">
+      <Select value={month} onValueChange={(m) => onChange(`${year}-${m}`)}>
+        <SelectTrigger className={monthClassName ?? "flex-1"}>
+          <SelectValue placeholder="Mês" />
+        </SelectTrigger>
+        <SelectContent>
+          {MONTH_NAMES.map((name, i) => (
+            <SelectItem key={name} value={String(i + 1).padStart(2, "0")}>{name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={year} onValueChange={(y) => onChange(`${y}-${month}`)}>
+        <SelectTrigger className={yearClassName ?? "w-28"}>
+          <SelectValue placeholder="Ano" />
+        </SelectTrigger>
+        <SelectContent>
+          {YEAR_OPTIONS.map((y) => (
+            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 /** Tabela do fechamento (faixa com o nome na cor do cliente + valores). Usada na prévia do envio e no detalhe do histórico. */
 function WaTablePreview({ clientName, tableData }: { clientName: string; tableData: TableData }) {
   return (
@@ -473,7 +510,7 @@ function FaturasPage() {
           <div className="flex flex-wrap items-center gap-3">
             <img src="/whatsapp-logo.svg" alt="WhatsApp" className="h-7 w-7 shrink-0" />
             <h2 className="text-lg font-bold text-foreground">Mensagens WhatsApp</h2>
-            <Input type="month" value={waMonth} onChange={(e) => setWaMonth(e.target.value)} className="w-44" />
+            <MonthYearSelect value={waMonth} onChange={setWaMonth} monthClassName="w-36" yearClassName="w-24" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -568,7 +605,7 @@ function FaturasPage() {
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
                       {w.attachment_path ? (
-                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path ?? "")} className="gap-1">
+                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path)} className="gap-1">
                           <Paperclip className="h-3.5 w-3.5" />
                           Ver fatura (PDF)
                         </Button>
@@ -1148,12 +1185,9 @@ function InvoiceDialog({
         <div className="space-y-4">
           <div>
             <Label>Mês de referência *</Label>
-            <Input
-              type="month"
-              value={f.reference_month}
-              onChange={(e) => handleReferenceMonthChange(e.target.value)}
-              className="mt-1"
-            />
+            <div className="mt-1">
+              <MonthYearSelect value={f.reference_month} onChange={handleReferenceMonthChange} />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
