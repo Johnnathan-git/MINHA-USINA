@@ -528,6 +528,8 @@ function FaturasPage() {
                 </span>
               ) : null}
             </div>
+          </div>
+          <div className="flex flex-1 justify-center">
             <MonthYearSelect value={waMonth} onChange={setWaMonth} monthClassName="w-36" yearClassName="w-24" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
