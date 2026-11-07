@@ -568,7 +568,7 @@ function FaturasPage() {
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
                       {w.attachment_path ? (
-                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path)} className="gap-1">
+                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path ?? "")} className="gap-1">
                           <Paperclip className="h-3.5 w-3.5" />
                           Ver fatura (PDF)
                         </Button>
