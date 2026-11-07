@@ -241,27 +241,14 @@ function FaturasPage() {
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
-  const [waViewing, setWaViewing] = useState<string | null>(null);
 
-  /** Abre o PDF da fatura anexada numa nova aba. Passa pelo proxy do app (/api/public/download) porque o Chrome bloqueia abrir direto o domínio do Supabase (ERR_BLOCKED_BY_CLIENT). */
-  async function viewWaAttachment(key: string, path: string) {
-    const win = window.open("", "_blank");
-    setWaViewing(key);
-    try {
-      const { data: signed, error } = await supabase.storage
-        .from("faturas_v3_privado_v2")
-        .createSignedUrl(path, 3600);
-      if (error) throw error;
-      const fileName = path.split("/").pop() || "fatura.pdf";
-      const proxyUrl = `/api/public/download?token=${encodeURIComponent(signed.signedUrl)}&name=${encodeURIComponent(fileName)}&disposition=inline`;
-      if (win) win.location.href = proxyUrl;
-      else window.location.href = proxyUrl;
-    } catch (e) {
-      if (win) win.close();
-      toast.error("Erro ao abrir anexo: " + ((e as Error)?.message || "tente de novo"));
-    } finally {
-      setWaViewing(null);
-    }
+  /** Abre o PDF da fatura anexada numa nova aba, pelo proxy do app: a URL leva só o caminho do arquivo, nada do Supabase nela, então o Chrome não bloqueia. */
+  function viewWaAttachment(path: string) {
+    const fileName = path.split("/").pop() || "fatura.pdf";
+    window.open(
+      `/api/public/download?path=${encodeURIComponent(path)}&name=${encodeURIComponent(fileName)}&disposition=inline`,
+      "_blank",
+    );
   }
 
   if (isLoading) {
@@ -506,8 +493,8 @@ function FaturasPage() {
                 <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
                 {p.attachment_path ? (
-                  <Button variant="outline" size="sm" onClick={() => viewWaAttachment(p.client_id, p.attachment_path!)} disabled={waViewing === p.client_id} className="gap-1">
-                    {waViewing === p.client_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                  <Button variant="outline" size="sm" onClick={() => viewWaAttachment(p.attachment_path!)} className="gap-1">
+                    <Paperclip className="h-3.5 w-3.5" />
                     Ver fatura (PDF)
                   </Button>
                 ) : (
@@ -565,8 +552,8 @@ function FaturasPage() {
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
                       {w.attachment_path ? (
-                        <Button variant="outline" size="sm" onClick={() => viewWaAttachment(w.id, w.attachment_path)} disabled={waViewing === w.id} className="gap-1">
-                          {waViewing === w.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                        <Button variant="outline" size="sm" onClick={() => viewWaAttachment(w.attachment_path)} className="gap-1">
+                          <Paperclip className="h-3.5 w-3.5" />
                           Ver fatura (PDF)
                         </Button>
                       ) : (
