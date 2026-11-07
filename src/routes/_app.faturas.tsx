@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
-import { buildWhatsAppMessage, formatPriceKw, type TableData } from "@/lib/whatsapp";
+import { buildWhatsAppMessage, DEFAULT_WHATSAPP_TEMPLATE, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -147,7 +147,7 @@ async function fetchFaturasPage() {
       .select("id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at,table_data,attachment_path")
       .order("created_at", { ascending: false })
       .limit(200),
-    supabase.from("plant_config").select("pix_key").eq("id", 1).maybeSingle(),
+    supabase.from("plant_config").select("pix_key, whatsapp_message_template").eq("id", 1).maybeSingle(),
     supabase.from("whatsapp_status").select("linked,checked_at,error").eq("id", 1).maybeSingle(),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
@@ -161,6 +161,8 @@ async function fetchFaturasPage() {
     whatsapp: (w.error ? [] : (w.data ?? [])) as WhatsAppQueue[],
     // Chave Pix do fechamento (plant_config.pix_key); sem ela, a linha do Pix sai da mensagem.
     pixKey: (cfg.error ? null : (cfg.data?.pix_key ?? null)) as string | null,
+    // Modelo da mensagem (plant_config.whatsapp_message_template); vazio = padrão do código.
+    waTemplate: (cfg.error ? null : (cfg.data?.whatsapp_message_template ?? null)) as string | null,
     // Estado da sessão do WhatsApp (tabela whatsapp_status, gravada pelo remetente); sem a migration, sem selo.
     whatsappStatus: (s.error ? null : (s.data ?? null)) as { linked: boolean; checked_at: string; error: string | null } | null,
   };
@@ -282,6 +284,9 @@ function FaturasPage() {
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
+  const [waTemplateOpen, setWaTemplateOpen] = useState(false);
+  const [waTemplateDraft, setWaTemplateDraft] = useState("");
+  const [waTemplateSaving, setWaTemplateSaving] = useState(false);
   const [waPdf, setWaPdf] = useState<{ title: string; fileName: string; url: string | null; error: string | null; loading: boolean } | null>(null);
 
   /** Abre o PDF da fatura num visualizador dentro do app: busca por POST (o caminho vai no corpo, fora da URL) e exibe num iframe. O Chrome do usuário bloqueia abrir nova aba com ".pdf" na URL. */
@@ -352,6 +357,8 @@ function FaturasPage() {
   const waFailed = waRows.filter((w) => w.status === "failed").length;
   // Selo de sessão do WhatsApp (gravado pelo remetente a cada 15 min).
   const waStatus = data.whatsappStatus ?? null;
+  // Modelo da mensagem de fechamento (editável no diálogo "Editar mensagem").
+  const waTemplate = data.waTemplate ?? null;
 
   /** Monta a prévia do fechamento do mês para o usuário analisar antes de enviar. Nada entra na fila aqui. */
   async function previewWhatsApp() {
@@ -390,6 +397,7 @@ function FaturasPage() {
             clientPays: Number(inv.client_pays),
             dueDate: invoiceDueDate(inv.notes) || null,
             pixKey: data.pixKey ?? undefined,
+            template: waTemplate ?? undefined,
           }),
           table_data: {
             referenceMonth: waMonth,
@@ -444,6 +452,23 @@ function FaturasPage() {
       toast.error((e as Error)?.message || "Erro ao confirmar envio");
     } finally {
       setWaConfirming(false);
+    }
+  }
+
+  /** Salva o modelo da mensagem de fechamento (vazio = volta ao padrão). */
+  async function saveWaTemplate() {
+    setWaTemplateSaving(true);
+    try {
+      const value = waTemplateDraft.trim() ? waTemplateDraft : null;
+      const { error } = await supabase.from("plant_config").upsert({ id: 1, whatsapp_message_template: value });
+      if (error) throw new Error(error.message);
+      toast.success("Mensagem salva. Vale a partir do próximo fechamento.");
+      setWaTemplateOpen(false);
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    } catch (e) {
+      toast.error((e as Error)?.message || "Erro ao salvar a mensagem");
+    } finally {
+      setWaTemplateSaving(false);
     }
   }
 
@@ -540,6 +565,10 @@ function FaturasPage() {
             >
               {waSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Enviar fechamento
+            </Button>
+            <Button variant="outline" onClick={() => { setWaTemplateDraft(waTemplate ?? DEFAULT_WHATSAPP_TEMPLATE); setWaTemplateOpen(true); }} className="gap-2">
+              <Pencil className="h-4 w-4" />
+              Editar mensagem
             </Button>
             <Button variant="outline" onClick={() => setWaHistoryOpen(true)} className="gap-2">
               <History className="h-4 w-4" />
@@ -667,6 +696,46 @@ function FaturasPage() {
               </a>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Editar a mensagem de fechamento — o modelo fica em plant_config e vale para a prévia e para o envio automático. */}
+      <Dialog open={waTemplateOpen} onOpenChange={setWaTemplateOpen}>
+        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Mensagem de fechamento</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea
+              value={waTemplateDraft}
+              onChange={(e) => setWaTemplateDraft(e.target.value)}
+              rows={7}
+              className="mt-1 font-mono text-sm"
+            />
+            <div className="rounded-lg bg-accent p-3 text-xs text-muted-foreground space-y-1">
+              <p className="font-bold text-foreground">O que vai no lugar de cada código:</p>
+              <p><code className="font-bold text-foreground">{"{nome}"}</code> — nome do cliente</p>
+              <p><code className="font-bold text-foreground">{"{mes}"}</code> — mês de referência (ex.: novembro)</p>
+              <p><code className="font-bold text-foreground">{"{valor}"}</code> — valor a pagar (ex.: R$ 553,03)</p>
+              <p><code className="font-bold text-foreground">{"{vencimento}"}</code> — já vem com &quot; com vencimento dia 17/11/2026&quot; (some se não houver vencimento)</p>
+              <p><code className="font-bold text-foreground">{"{chave_pix}"}</code> — chave Pix (a linha inteira some se não houver chave cadastrada)</p>
+            </div>
+          </div>
+          <DialogFooter className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setWaTemplateDraft(DEFAULT_WHATSAPP_TEMPLATE)}
+              disabled={waTemplateSaving}
+            >
+              Restaurar padrão
+            </Button>
+            <Button variant="outline" onClick={() => setWaTemplateOpen(false)} disabled={waTemplateSaving}>
+              Cancelar
+            </Button>
+            <Button onClick={saveWaTemplate} disabled={waTemplateSaving}>
+              {waTemplateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
