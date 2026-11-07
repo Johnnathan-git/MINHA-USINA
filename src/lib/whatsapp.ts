@@ -17,7 +17,7 @@ import { brl, formatDateBR, monthLabelLong, parseISODateLocal } from "./format";
 
 /** Modelo padrão da mensagem (vale quando não há modelo salvo). */
 export const DEFAULT_WHATSAPP_TEMPLATE =
-  "Olá, {nome}! Segue o fechamento de energia referente ao mês de {mes}. O valor ficou em {valor}{vencimento}.\nA chave Pix para pagamento é {chave_pix}.\nQualquer dúvida estou à disposição.\nAtt: Financeiro.";
+  "Olá, {nome}! Segue o fechamento da sua fatura de energia referente ao mês de {mes}. O valor a pagar é de {valor}{vencimento}.\nA chave Pix para pagamento é {chave_pix}.\nEm caso de dúvidas, estamos à disposição.\nAtenciosamente,\nEquipe Financeira — Minha Usina";
 
 export type TableData = {
   referenceMonth: string; // "yyyy-mm"
