@@ -33,13 +33,20 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server')
         let q = supabaseAdmin
           .from('whatsapp_queue')
-          .select('id,client_id,client_name,phone,reference_month,message_text,table_data,attachment_path,status,error,created_at,sent_at')
+          .select('id,client_id,client_name,phone,reference_month,message_text,table_data,attachment_path,status,error,created_at,sent_at,clients(color)')
           .order('created_at', { ascending: true })
         if (status) q = q.eq('status', status)
         if (referenceMonth) q = q.eq('reference_month', referenceMonth)
         const { data, error } = await q
         if (error) return Response.json({ error: error.message }, { status: 500 })
-        return Response.json({ rows: data ?? [] })
+        // Cor do card do cliente (faixa com o nome na tabela): da ficha do
+        // cliente quando disponível, senão a que já estava em table_data.
+        const rows = (data ?? []).map((r: any) => ({
+          ...r,
+          color: r.clients?.color ?? r.table_data?.color ?? null,
+          clients: undefined,
+        }))
+        return Response.json({ rows })
       },
 
       POST: async ({ request }) => {
@@ -163,6 +170,7 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
                 valueWithoutPlant: Number(inv.value_without_plant),
                 clientPays: Number(inv.client_pays),
                 discountPct: Number(client.discount_pct),
+                color: client.color ?? null,
               },
               attachment_path: inv.attachment_url ?? null,
             })

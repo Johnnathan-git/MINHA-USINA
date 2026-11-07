@@ -13,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw } from "lucide-react";
-import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles } from "@/lib/format";
+import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
 import { buildWhatsAppMessage, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -277,6 +277,7 @@ function FaturasPage() {
             valueWithoutPlant: Number(inv.value_without_plant),
             clientPays: Number(inv.client_pays),
             discountPct: Number(c.discount_pct),
+            color: c.color ?? CLIENT_COLORS[0],
           },
           attachment_path: inv.attachment_url ?? null,
         });
@@ -424,7 +425,13 @@ function FaturasPage() {
             </div>
             {waPreview.map((p) => (
               <div key={p.client_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
-                <div className="bg-[#FDE047] px-2 py-1 text-center text-sm font-bold uppercase text-black">
+                <div
+                  className="px-2 py-1 text-center text-sm font-bold uppercase"
+                  style={{
+                    backgroundColor: p.table_data.color ?? "#FDE047",
+                    color: textOnColor(p.table_data.color ?? "#FDE047"),
+                  }}
+                >
                   {p.client_name}
                 </div>
                 <div className="overflow-x-auto">
@@ -793,6 +800,7 @@ function InvoiceDialog({
     distributor_invoice: invoice ? String(invoice.distributor_invoice) : "0",
     notes: stripPaymentTag(invoice?.notes),
     attachment_url: invoice?.attachment_url ?? "",
+    attachment_name: invoice?.attachment_url ? (invoice.attachment_url.split("/").pop() ?? "") : "",
     payment_status: invoicePaymentStatus(invoice?.notes) as "pago" | "pendente",
     due_date: invoiceDueDate(invoice?.notes),
   });
@@ -810,6 +818,7 @@ function InvoiceDialog({
         distributor_invoice: String(invoice.distributor_invoice),
         notes: stripPaymentTag(invoice.notes),
         attachment_url: invoice.attachment_url ?? "",
+        attachment_name: invoice.attachment_url ? (invoice.attachment_url.split("/").pop() ?? "") : "",
         payment_status: invoicePaymentStatus(invoice.notes),
         due_date: invoiceDueDate(invoice.notes),
       });
@@ -837,6 +846,7 @@ function InvoiceDialog({
       distributor_invoice: String(pending.distributor_invoice),
       notes: "",
       attachment_url: pending.attachment_url ?? "",
+      attachment_name: pending.attachment_url ? (pending.attachment_url.split("/").pop() ?? "") : "",
       payment_status: "pago",
       due_date: pending.due_date ?? "",
     });
@@ -1000,7 +1010,7 @@ function InvoiceDialog({
         .from("faturas_v3_privado_v2")
         .upload(filePath, file);
       if (uploadError) throw uploadError;
-      setF((prev) => ({ ...prev, attachment_url: filePath }));
+      setF((prev) => ({ ...prev, attachment_url: filePath, attachment_name: file.name }));
       toast.success("Arquivo anexado!");
     } catch (err: any) {
       toast.error("Erro ao subir arquivo: " + err.message);
@@ -1142,13 +1152,18 @@ function InvoiceDialog({
               {f.attachment_url && (
                 <button
                   type="button"
-                  onClick={() => setF((prev) => ({ ...prev, attachment_url: "" }))}
+                  onClick={() => setF((prev) => ({ ...prev, attachment_url: "", attachment_name: "" }))}
                   className="text-xs text-red-500 hover:underline"
                 >
                   Remover
                 </button>
               )}
             </div>
+            {f.attachment_url && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                ✓ Anexado: {f.attachment_name || f.attachment_url.split("/").pop()}
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter className="mt-6">

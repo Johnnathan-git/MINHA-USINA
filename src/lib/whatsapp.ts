@@ -21,6 +21,7 @@ export type TableData = {
   valueWithoutPlant: number;
   clientPays: number;
   discountPct: number; // 30 ou 25
+  color?: string | null; // cor do card do cliente (faixa com o nome na tabela)
 };
 
 export function buildWhatsAppMessage(args: {

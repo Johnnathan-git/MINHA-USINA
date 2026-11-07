@@ -61,6 +61,17 @@ export const CLIENT_COLORS = [
   "#2563EB", // Blue
 ];
 
+/** Cor de texto legível sobre um fundo (preto em fundo claro, branco em fundo escuro). */
+export const textOnColor = (hex: string) => {
+  const h = hex.replace('#', '');
+  if (h.length !== 6) return '#000000';
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? '#000000' : '#FFFFFF';
+};
+
 /** Fundo suave a partir da cor do cliente (visual mais sóbrio). */
 export const softBg = (hex: string) => `${hex}20`;
 
