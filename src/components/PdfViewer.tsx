@@ -38,7 +38,7 @@ export function PdfViewer({ url }: { url: string }) {
           container.appendChild(canvas);
           const ctx = canvas.getContext("2d");
           if (!ctx) continue;
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          await page.render({ canvasContext: ctx, viewport, canvas } as never).promise;
         }
       } catch (e) {
         if (!cancelled) setError((e as Error)?.message || "Não foi possível abrir o PDF.");
@@ -46,7 +46,13 @@ export function PdfViewer({ url }: { url: string }) {
     })();
     return () => {
       cancelled = true;
-      void doc?.destroy();
+      try {
+        const d = doc as unknown as { destroy?: () => unknown; cleanup?: () => unknown } | null;
+        if (d && typeof d.destroy === "function") void d.destroy();
+        else if (d && typeof d.cleanup === "function") void d.cleanup();
+      } catch {
+        /* ignore */
+      }
     };
   }, [url]);
 
