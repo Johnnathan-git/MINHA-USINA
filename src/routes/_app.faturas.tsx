@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
+import { PdfViewer } from "@/components/PdfViewer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -603,7 +604,7 @@ function FaturasPage() {
             <p className="text-sm text-red-500">{waPdf.error}</p>
           ) : waPdf?.url ? (
             <div className="space-y-3">
-              <iframe src={waPdf.url} title={waPdf.title} className="h-[70vh] w-full rounded-lg border border-border bg-white" />
+              <PdfViewer url={waPdf.url} />
               <a href={waPdf.url} download={waPdf.fileName} className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline">
                 <Paperclip className="h-3.5 w-3.5" /> Baixar PDF
               </a>
