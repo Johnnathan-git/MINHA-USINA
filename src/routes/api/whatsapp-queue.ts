@@ -93,6 +93,21 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
           return Response.json({ status: 'ok' })
         }
 
+        if (action === 'download') {
+          // Baixa o PDF da fatura pelo servidor e devolve em base64. O
+          // remetente baixa por aqui em vez da URL assinada: o download
+          // direto do storage a partir da VM é instável (timeout /
+          // IncompleteRead), enquanto o canal remetente -> app é confiável.
+          const path = String(body?.path ?? '')
+          if (!path) return Response.json({ error: 'path é obrigatório.' }, { status: 400 })
+          const { data, error } = await supabaseAdmin.storage
+            .from('faturas_v3_privado_v2')
+            .download(path)
+          if (error || !data) return Response.json({ error: error?.message ?? 'download falhou' }, { status: 500 })
+          const buf = Buffer.from(await data.arrayBuffer())
+          return Response.json({ pdf_base64: buf.toString('base64') })
+        }
+
         if (action === 'sign') {
           const path = String(body?.path ?? '')
           if (!path) return Response.json({ error: 'path é obrigatório.' }, { status: 400 })
