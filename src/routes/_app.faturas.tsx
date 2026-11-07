@@ -178,6 +178,9 @@ function FaturasPage() {
     queryFn: fetchFaturasPage,
     retry: 1,
     staleTime: 2 * 60_000,
+    // A fila do WhatsApp muda sozinha (o remetente envia em segundo plano):
+    // sem isso, "Na fila" ficava parado na tela mesmo depois de enviado.
+    refetchInterval: 30_000,
   });
 
   const [showInactive, setShowInactive] = useState(false);
