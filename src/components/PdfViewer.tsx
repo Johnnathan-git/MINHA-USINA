@@ -19,7 +19,7 @@ export function PdfViewer({ url }: { url: string }) {
     let doc: pdfjsLib.PDFDocumentProxy | null = null;
     (async () => {
       try {
-        doc = await pdfjsLib.getDocument(url).promise;
+        doc = await pdfjsLib.getDocument({ url }).promise;
         if (cancelled) return;
         setPages(doc.numPages);
         const container = containerRef.current;
