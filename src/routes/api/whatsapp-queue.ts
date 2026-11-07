@@ -202,7 +202,23 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
           })
         }
 
-        return Response.json({ error: 'action inválida (prepare|ack|retry).' }, { status: 400 })
+        if (action === 'heartbeat') {
+          // O remetente avisa se a sessão do WhatsApp está vinculada.
+          // A página Faturas mostra o selo Conectado/Desconectado.
+          const linked = body?.linked === true
+          const { error } = await supabaseAdmin
+            .from('whatsapp_status')
+            .upsert({
+              id: 1,
+              linked,
+              checked_at: new Date().toISOString(),
+              error: linked ? null : String(body?.error ?? '').slice(0, 500) || null,
+            })
+          if (error) return Response.json({ error: error.message }, { status: 500 })
+          return Response.json({ status: 'ok' })
+        }
+
+        return Response.json({ error: 'action inválida (prepare|ack|retry|heartbeat).' }, { status: 400 })
       },
     },
   },

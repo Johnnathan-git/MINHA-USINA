@@ -134,7 +134,7 @@ function withPaymentTag(
 }
 
 async function fetchFaturasPage() {
-  const [c, i, p, w, cfg] = await Promise.all([
+  const [c, i, p, w, cfg, s] = await Promise.all([
     supabase.from("clients").select("*").order("created_at", { ascending: true }),
     supabase.from("invoices").select("id,client_id,reference_date,attachment_url,notes"),
     supabase
@@ -148,6 +148,7 @@ async function fetchFaturasPage() {
       .order("created_at", { ascending: false })
       .limit(200),
     supabase.from("plant_config").select("pix_key").eq("id", 1).maybeSingle(),
+    supabase.from("whatsapp_status").select("linked,checked_at,error").eq("id", 1).maybeSingle(),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
   if (i.error) throw new Error(i.error.message || "Erro ao carregar faturas");
@@ -160,6 +161,8 @@ async function fetchFaturasPage() {
     whatsapp: (w.error ? [] : (w.data ?? [])) as WhatsAppQueue[],
     // Chave Pix do fechamento (plant_config.pix_key); sem ela, a linha do Pix sai da mensagem.
     pixKey: (cfg.error ? null : (cfg.data?.pix_key ?? null)) as string | null,
+    // Estado da sessão do WhatsApp (tabela whatsapp_status, gravada pelo remetente); sem a migration, sem selo.
+    whatsappStatus: (s.error ? null : (s.data ?? null)) as { linked: boolean; checked_at: string; error: string | null } | null,
   };
 }
 
@@ -347,6 +350,8 @@ function FaturasPage() {
   const waSent = waRows.filter((w) => w.status === "sent").length;
   const waPending = waRows.filter((w) => w.status === "pending").length;
   const waFailed = waRows.filter((w) => w.status === "failed").length;
+  // Selo de sessão do WhatsApp (gravado pelo remetente a cada 15 min).
+  const waStatus = data.whatsappStatus ?? null;
 
   /** Monta a prévia do fechamento do mês para o usuário analisar antes de enviar. Nada entra na fila aqui. */
   async function previewWhatsApp() {
@@ -510,6 +515,17 @@ function FaturasPage() {
           <div className="flex flex-wrap items-center gap-3">
             <img src="/whatsapp-logo.svg" alt="WhatsApp" className="h-7 w-7 shrink-0" />
             <h2 className="text-lg font-bold text-foreground">Mensagens WhatsApp</h2>
+            {waStatus ? (
+              <span
+                title={`Verificado em ${new Date(waStatus.checked_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`}
+                className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                  waStatus.linked ? "bg-emerald-500/15 text-emerald-600" : "bg-red-500/15 text-red-600"
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${waStatus.linked ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+                {waStatus.linked ? "Conectado" : "Desconectado"}
+              </span>
+            ) : null}
             <MonthYearSelect value={waMonth} onChange={setWaMonth} monthClassName="w-36" yearClassName="w-24" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
