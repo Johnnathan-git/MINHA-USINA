@@ -12,7 +12,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw } from "lucide-react";
+import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
 import { buildWhatsAppMessage, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
@@ -69,6 +69,8 @@ type WhatsAppQueue = {
   error: string | null;
   created_at: string;
   sent_at: string | null;
+  table_data: TableData | null;
+  attachment_path: string | null;
 };
 
 /** Prévia do fechamento antes de entrar na fila: o usuário analisa e confirma. */
@@ -141,7 +143,7 @@ async function fetchFaturasPage() {
       .order("reference_date", { ascending: true }),
     supabase
       .from("whatsapp_queue")
-      .select("id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at")
+      .select("id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at,table_data,attachment_path")
       .order("created_at", { ascending: false })
       .limit(200),
     supabase.from("plant_config").select("pix_key").eq("id", 1).maybeSingle(),
@@ -158,6 +160,51 @@ async function fetchFaturasPage() {
     // Chave Pix do fechamento (plant_config.pix_key); sem ela, a linha do Pix sai da mensagem.
     pixKey: (cfg.error ? null : (cfg.data?.pix_key ?? null)) as string | null,
   };
+}
+
+/** Tabela do fechamento (faixa com o nome na cor do cliente + valores). Usada na prévia do envio e no detalhe do histórico. */
+function WaTablePreview({ clientName, tableData }: { clientName: string; tableData: TableData }) {
+  return (
+    <div className="space-y-0">
+      <div
+        className="px-2 py-1 text-center text-sm font-bold uppercase"
+        style={{
+          backgroundColor: tableData.color ?? "#FDE047",
+          color: textOnColor(tableData.color ?? "#FDE047"),
+        }}
+      >
+        {clientName}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-center text-xs">
+          <thead>
+            <tr className="[&>th]:border [&>th]:border-border [&>th]:px-1.5 [&>th]:py-1 [&>th]:font-bold">
+              <th>MÊS REFERÊNCIA</th>
+              <th>UC</th>
+              <th>CONSUMO KW</th>
+              <th>PREÇO KW</th>
+              <th>ILUM. PÚBLICA</th>
+              <th>JUROS MORATÓRIA/MULTA</th>
+              <th>VALOR S/ USINA</th>
+              <th>VALOR C/ {tableData.discountPct}% DESCONTO</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className="[&>td]:border [&>td]:border-border [&>td]:px-1.5 [&>td]:py-1 [&>td]:tabular-nums">
+              <td>{monthLabelFromISO(`${tableData.referenceMonth}-01`)}</td>
+              <td>{tableData.ucNumber}</td>
+              <td>{tableData.consumptionKw}</td>
+              <td>{tableData.priceKw}</td>
+              <td>{brl(tableData.publicLighting)}</td>
+              <td>{brl(tableData.interestFine)}</td>
+              <td>{brl(tableData.valueWithoutPlant)}</td>
+              <td className="font-bold text-red-600">{brl(tableData.clientPays)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export const Route = createFileRoute("/_app/faturas")({
@@ -192,6 +239,8 @@ function FaturasPage() {
   const [waSending, setWaSending] = useState(false);
   const [waPreview, setWaPreview] = useState<WhatsAppPreview[] | null>(null);
   const [waConfirming, setWaConfirming] = useState(false);
+  const [waHistoryOpen, setWaHistoryOpen] = useState(false);
+  const [waExpanded, setWaExpanded] = useState<string | null>(null);
 
   if (isLoading) {
     return (
@@ -231,6 +280,11 @@ function FaturasPage() {
 
   // Mensagens de WhatsApp do mês selecionado na seção de fechamento.
   const waRows = (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth);
+  // Uma linha por cliente/mês na fila — é ela que diz quem já recebeu e quem falta.
+  const waStatusByClient = new Map(waRows.map((w) => [w.client_id, w.status]));
+  const waSent = waRows.filter((w) => w.status === "sent").length;
+  const waPending = waRows.filter((w) => w.status === "pending").length;
+  const waFailed = waRows.filter((w) => w.status === "failed").length;
 
   /** Monta a prévia do fechamento do mês para o usuário analisar antes de enviar. Nada entra na fila aqui. */
   async function previewWhatsApp() {
@@ -410,6 +464,10 @@ function FaturasPage() {
               {waSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Enviar fechamento
             </Button>
+            <Button variant="outline" onClick={() => setWaHistoryOpen(true)} className="gap-2">
+              <History className="h-4 w-4" />
+              Histórico de envios{waRows.length > 0 ? ` (${waRows.length})` : ""}
+            </Button>
           </div>
         </div>
         {waPreview !== null && waPreview.length > 0 ? (
@@ -428,43 +486,7 @@ function FaturasPage() {
             </div>
             {waPreview.map((p) => (
               <div key={p.client_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
-                <div
-                  className="px-2 py-1 text-center text-sm font-bold uppercase"
-                  style={{
-                    backgroundColor: p.table_data.color ?? "#FDE047",
-                    color: textOnColor(p.table_data.color ?? "#FDE047"),
-                  }}
-                >
-                  {p.client_name}
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-center text-xs">
-                    <thead>
-                      <tr className="[&>th]:border [&>th]:border-border [&>th]:px-1.5 [&>th]:py-1 [&>th]:font-bold">
-                        <th>MÊS REFERÊNCIA</th>
-                        <th>UC</th>
-                        <th>CONSUMO KW</th>
-                        <th>PREÇO KW</th>
-                        <th>ILUM. PÚBLICA</th>
-                        <th>JUROS MORATÓRIA/MULTA</th>
-                        <th>VALOR S/ USINA</th>
-                        <th>VALOR C/ {p.table_data.discountPct}% DESCONTO</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="[&>td]:border [&>td]:border-border [&>td]:px-1.5 [&>td]:py-1 [&>td]:tabular-nums">
-                        <td>{monthLabelFromISO(`${p.table_data.referenceMonth}-01`)}</td>
-                        <td>{p.table_data.ucNumber}</td>
-                        <td>{p.table_data.consumptionKw}</td>
-                        <td>{p.table_data.priceKw}</td>
-                        <td>{brl(p.table_data.publicLighting)}</td>
-                        <td>{brl(p.table_data.interestFine)}</td>
-                        <td>{brl(p.table_data.valueWithoutPlant)}</td>
-                        <td className="font-bold text-red-600">{brl(p.table_data.clientPays)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
                 <p className="text-xs text-muted-foreground">
                   Anexo: {p.attachment_path ? "fatura do mês (PDF)" : "sem PDF da fatura neste lançamento"}
@@ -476,38 +498,78 @@ function FaturasPage() {
         {waRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhuma mensagem preparada para este mês.</p>
         ) : (
-          <ul className="space-y-2">
-            {waRows.map((w) => (
-              <li key={w.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-accent/40 p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-bold text-foreground">{w.client_name}</span>
-                    <span className="text-muted-foreground">{w.phone}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                        w.status === "sent"
-                          ? "bg-emerald-500/15 text-emerald-600"
-                          : w.status === "failed"
-                            ? "bg-red-500/15 text-red-600"
-                            : "bg-amber-500/15 text-amber-600"
-                      }`}
-                    >
-                      {w.status === "sent" ? "Enviada" : w.status === "failed" ? "Falhou" : "Na fila"}
-                    </span>
-                  </div>
-                  <p className="mt-1 break-words text-xs text-muted-foreground">{w.message_text}</p>
-                  {w.error ? <p className="mt-1 text-xs text-red-500">{w.error}</p> : null}
-                </div>
-                {w.status === "failed" ? (
-                  <Button variant="outline" size="sm" onClick={() => retryWhatsApp(w.id)} className="gap-1">
-                    <RefreshCw className="h-3.5 w-3.5" /> Reenviar
-                  </Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+          <p className="text-sm text-muted-foreground">
+            {monthLabelFromISO(`${waMonth}-01`)}: {waSent} enviada(s) · {waPending} na fila · {waFailed} falhou(aram)
+            {" — "}
+            <button onClick={() => setWaHistoryOpen(true)} className="font-bold text-primary underline-offset-2 hover:underline">
+              ver histórico
+            </button>
+          </p>
         )}
       </Card>
+
+      {/* Histórico de envios do mês — abre por botão para a tela não encher. Toque em um cliente para conferir o que foi enviado. */}
+      <Dialog open={waHistoryOpen} onOpenChange={(o) => { setWaHistoryOpen(o); if (!o) setWaExpanded(null); }}>
+        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Histórico de envios — {monthLabelFromISO(`${waMonth}-01`)}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">
+            {waSent} enviada(s) · {waPending} na fila · {waFailed} falhou(aram). Toque em um cliente para conferir a tabela, a mensagem e o anexo.
+          </p>
+          {waRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhuma mensagem neste mês.</p>
+          ) : (
+            <ul className="space-y-2">
+              {waRows.map((w) => (
+                <li key={w.id} className="rounded-lg border border-border bg-accent/40">
+                  <button
+                    onClick={() => setWaExpanded((v) => (v === w.id ? null : w.id))}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left"
+                  >
+                    <span className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-bold text-foreground">{w.client_name}</span>
+                      <span className="text-muted-foreground">{w.phone}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                          w.status === "sent"
+                            ? "bg-emerald-500/15 text-emerald-600"
+                            : w.status === "failed"
+                              ? "bg-red-500/15 text-red-600"
+                              : "bg-amber-500/15 text-amber-600"
+                        }`}
+                      >
+                        {w.status === "sent" ? "Enviada" : w.status === "failed" ? "Falhou" : "Na fila"}
+                      </span>
+                      {w.sent_at ? (
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(w.sent_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      ) : null}
+                    </span>
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${waExpanded === w.id ? "rotate-180" : ""}`} />
+                  </button>
+                  {waExpanded === w.id ? (
+                    <div className="space-y-2 border-t border-border p-3">
+                      {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
+                      <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Anexo: {w.attachment_path ? "fatura do mês (PDF)" : "sem PDF da fatura neste lançamento"}
+                      </p>
+                      {w.error ? <p className="text-xs text-red-500">{w.error}</p> : null}
+                      {w.status === "failed" ? (
+                        <Button variant="outline" size="sm" onClick={() => retryWhatsApp(w.id)} className="gap-1">
+                          <RefreshCw className="h-3.5 w-3.5" /> Reenviar
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {shown.length === 0 && (
         <Card className="glass-card border-border p-10 text-center text-muted-foreground">
@@ -571,6 +633,19 @@ function FaturasPage() {
                   <Paperclip className="h-3 w-3" /> Anexos
                 </span>
               )}
+              {waStatusByClient.get(c.id) === "sent" ? (
+                <span className="flex items-center gap-1 text-emerald-600">
+                  <Check className="h-3 w-3" /> WhatsApp enviado
+                </span>
+              ) : waStatusByClient.get(c.id) === "pending" ? (
+                <span className="flex items-center gap-1 text-amber-600">
+                  <MessageCircle className="h-3 w-3" /> Na fila
+                </span>
+              ) : waStatusByClient.get(c.id) === "failed" ? (
+                <span className="flex items-center gap-1 text-red-600">
+                  <MessageCircle className="h-3 w-3" /> Falhou
+                </span>
+              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Button
