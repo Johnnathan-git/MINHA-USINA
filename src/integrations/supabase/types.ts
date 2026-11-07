@@ -475,18 +475,21 @@ export type Database = {
           id: number
           kw_per_panel: number
           panels_count: number
+          pix_key: string | null
           updated_at: string
         }
         Insert: {
           id?: number
           kw_per_panel?: number
           panels_count?: number
+          pix_key?: string | null
           updated_at?: string
         }
         Update: {
           id?: number
           kw_per_panel?: number
           panels_count?: number
+          pix_key?: string | null
           updated_at?: string
         }
         Relationships: []

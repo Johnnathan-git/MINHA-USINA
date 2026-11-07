@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { timingSafeEqual } from 'node:crypto'
-import { buildWhatsAppMessage, PIX_KEY, formatPriceKw } from '@/lib/whatsapp'
+import { buildWhatsAppMessage, formatPriceKw } from '@/lib/whatsapp'
 
 /**
  * Fila de mensagens de WhatsApp (fechamento mensal).
@@ -118,6 +118,14 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
             .eq('reference_month', referenceMonth)
           const alreadyQueued = new Set((existing ?? []).map((r: any) => r.client_id))
 
+          // Chave Pix do fechamento (plant_config.pix_key, mesma para todos).
+          const { data: cfg } = await supabaseAdmin
+            .from('plant_config')
+            .select('pix_key')
+            .eq('id', 1)
+            .maybeSingle()
+          const pixKey = (cfg?.pix_key as string | null) ?? undefined
+
           const created: string[] = []
           const skippedNoPhone: string[] = []
           const skippedAlready: string[] = []
@@ -136,7 +144,7 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
               referenceMonth,
               clientPays: Number(inv.client_pays),
               dueDate: due,
-              pixKey: PIX_KEY || undefined,
+              pixKey,
             })
             const { error: insertError } = await supabaseAdmin.from('whatsapp_queue').insert({
               client_id: client.id,

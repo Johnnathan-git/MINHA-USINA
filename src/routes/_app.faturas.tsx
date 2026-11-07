@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles } from "@/lib/format";
-import { buildWhatsAppMessage, PIX_KEY, formatPriceKw, type TableData } from "@/lib/whatsapp";
+import { buildWhatsAppMessage, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -131,7 +131,7 @@ function withPaymentTag(
 }
 
 async function fetchFaturasPage() {
-  const [c, i, p, w] = await Promise.all([
+  const [c, i, p, w, cfg] = await Promise.all([
     supabase.from("clients").select("*").order("created_at", { ascending: true }),
     supabase.from("invoices").select("id,client_id,reference_date,attachment_url,notes"),
     supabase
@@ -144,6 +144,7 @@ async function fetchFaturasPage() {
       .select("id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at")
       .order("created_at", { ascending: false })
       .limit(200),
+    supabase.from("plant_config").select("pix_key").eq("id", 1).maybeSingle(),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
   if (i.error) throw new Error(i.error.message || "Erro ao carregar faturas");
@@ -154,6 +155,8 @@ async function fetchFaturasPage() {
     pending: (p.error ? [] : (p.data ?? [])) as PendingImport[],
     // Idem para a fila do WhatsApp: sem a migration, a seção aparece vazia.
     whatsapp: (w.error ? [] : (w.data ?? [])) as WhatsAppQueue[],
+    // Chave Pix do fechamento (plant_config.pix_key); sem ela, a linha do Pix sai da mensagem.
+    pixKey: (cfg.error ? null : (cfg.data?.pix_key ?? null)) as string | null,
   };
 }
 
@@ -262,7 +265,7 @@ function FaturasPage() {
             referenceMonth: waMonth,
             clientPays: Number(inv.client_pays),
             dueDate: invoiceDueDate(inv.notes) || null,
-            pixKey: PIX_KEY || undefined,
+            pixKey: data.pixKey ?? undefined,
           }),
           table_data: {
             referenceMonth: waMonth,

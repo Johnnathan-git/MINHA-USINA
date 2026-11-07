@@ -6,10 +6,10 @@ import { brl, formatDateBR, monthLabelLong, parseISODateLocal } from "./format";
  * Faturas e pela rota /api/whatsapp-queue (prepare, para o envio
  * automático mensal). Se o texto mudar, mude aqui.
  *
- * A chave Pix é a mesma para todos os clientes. Enquanto não for informada,
- * a linha do Pix sai da mensagem.
+ * A chave Pix vem da tabela plant_config (coluna pix_key) e é a mesma para
+ * todos os clientes. Enquanto não for informada, a linha do Pix sai da
+ * mensagem. Ela NÃO fica no código: o repositório é público.
  */
-export const PIX_KEY = "";
 
 export type TableData = {
   referenceMonth: string; // "yyyy-mm"
