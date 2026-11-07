@@ -35,7 +35,7 @@ export function buildWhatsAppMessage(args: {
   const value = brl(args.clientPays);
   const due = args.dueDate ? ` com vencimento dia ${formatDateBR(args.dueDate)}` : "";
   const pix = args.pixKey
-    ? `\nA chave Pix para pagamento é ${args.pixKey}.`
+    ? `\nA chave Pix para pagamento é \`${args.pixKey}\`.`
     : "";
   return `Olá, ${args.clientName}! Segue o fechamento de energia referente ao mês de ${month}. O valor ficou em ${value}${due}.${pix}\nQualquer dúvida estou à disposição.\nAtt: Financeiro.`;
 }
