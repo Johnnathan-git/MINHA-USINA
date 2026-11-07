@@ -22,6 +22,7 @@ import { Route as AppRelatorioRouteImport } from './routes/_app.relatorio'
 import { Route as AppResultadoRouteImport } from './routes/_app.resultado'
 import { Route as ApiImportExpenseRouteImport } from './routes/api/import-expense'
 import { Route as ApiImportPendingRouteImport } from './routes/api/import-pending'
+import { Route as ApiWhatsappQueueRouteImport } from './routes/api/whatsapp-queue'
 import { Route as ApiPublicDownloadRouteImport } from './routes/api/public/download'
 
 const AppRoute = AppRouteImport.update({
@@ -88,6 +89,11 @@ const ApiImportPendingRoute = ApiImportPendingRouteImport.update({
   path: '/api/import-pending',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWhatsappQueueRoute = ApiWhatsappQueueRouteImport.update({
+  id: '/api/whatsapp-queue',
+  path: '/api/whatsapp-queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicDownloadRoute = ApiPublicDownloadRouteImport.update({
   id: '/api/public/download',
   path: '/api/public/download',
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/resultado': typeof AppResultadoRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
+  '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
 }
 export interface FileRoutesByTo {
@@ -121,6 +128,7 @@ export interface FileRoutesByTo {
   '/resultado': typeof AppResultadoRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
+  '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
   '/': typeof AppIndexRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
 }
@@ -138,6 +146,7 @@ export interface FileRoutesById {
   '/_app/resultado': typeof AppResultadoRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
+  '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
   '/_app/': typeof AppIndexRoute
   '/api/public/download': typeof ApiPublicDownloadRoute
 }
@@ -156,6 +165,7 @@ export interface FileRouteTypes {
     | '/resultado'
     | '/api/import-expense'
     | '/api/import-pending'
+    | '/api/whatsapp-queue'
     | '/api/public/download'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -170,6 +180,7 @@ export interface FileRouteTypes {
     | '/resultado'
     | '/api/import-expense'
     | '/api/import-pending'
+    | '/api/whatsapp-queue'
     | '/'
     | '/api/public/download'
   id:
@@ -186,6 +197,7 @@ export interface FileRouteTypes {
     | '/_app/resultado'
     | '/api/import-expense'
     | '/api/import-pending'
+    | '/api/whatsapp-queue'
     | '/_app/'
     | '/api/public/download'
   fileRoutesById: FileRoutesById
@@ -196,6 +208,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiImportExpenseRoute: typeof ApiImportExpenseRoute
   ApiImportPendingRoute: typeof ApiImportPendingRoute
+  ApiWhatsappQueueRoute: typeof ApiWhatsappQueueRoute
   ApiPublicDownloadRoute: typeof ApiPublicDownloadRoute
 }
 
@@ -292,6 +305,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiImportPendingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/whatsapp-queue': {
+      id: '/api/whatsapp-queue'
+      path: '/api/whatsapp-queue'
+      fullPath: '/api/whatsapp-queue'
+      preLoaderRoute: typeof ApiWhatsappQueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/download': {
       id: '/api/public/download'
       path: '/api/public/download'
@@ -332,6 +352,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ApiImportExpenseRoute: ApiImportExpenseRoute,
   ApiImportPendingRoute: ApiImportPendingRoute,
+  ApiWhatsappQueueRoute: ApiWhatsappQueueRoute,
   ApiPublicDownloadRoute: ApiPublicDownloadRoute,
 }
 export const routeTree = rootRouteImport

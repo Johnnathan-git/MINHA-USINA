@@ -414,6 +414,56 @@ export type Database = {
           },
         ]
       }
+      whatsapp_queue: {
+        Row: {
+          client_id: string
+          client_name: string
+          created_at: string
+          error: string | null
+          id: string
+          message_text: string
+          phone: string
+          reference_month: string
+          sent_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          client_name: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          message_text: string
+          phone: string
+          reference_month: string
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          client_name?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          message_text?: string
+          phone?: string
+          reference_month?: string
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_queue_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plant_config: {
         Row: {
           id: number

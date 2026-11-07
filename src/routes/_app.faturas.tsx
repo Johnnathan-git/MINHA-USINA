@@ -12,8 +12,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2 } from "lucide-react";
+import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles } from "@/lib/format";
+import { buildWhatsAppMessage } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -54,6 +55,20 @@ type Invoice = {
   distributor_invoice: number;
   notes: string | null;
   attachment_url: string | null;
+};
+
+/** Mensagem de fechamento na fila do WhatsApp (tabela whatsapp_queue). */
+type WhatsAppQueue = {
+  id: string;
+  client_id: string;
+  client_name: string;
+  phone: string;
+  reference_month: string;
+  message_text: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
 };
 
 /** Status de pagamento em notes: [[status:pendente]] — sem tag = pago */
@@ -105,7 +120,7 @@ function withPaymentTag(
 }
 
 async function fetchFaturasPage() {
-  const [c, i, p] = await Promise.all([
+  const [c, i, p, w] = await Promise.all([
     supabase.from("clients").select("*").order("created_at", { ascending: true }),
     supabase.from("invoices").select("id,client_id,reference_date,attachment_url,notes"),
     supabase
@@ -113,6 +128,11 @@ async function fetchFaturasPage() {
       .select("id,client_id,reference_date,consumption_kw,price_kw,price_kw_exact,public_lighting,interest_fine,distributor_invoice,due_date,attachment_url,source_pdf_filename")
       .eq("status", "pending")
       .order("reference_date", { ascending: true }),
+    supabase
+      .from("whatsapp_queue")
+      .select("id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at")
+      .order("created_at", { ascending: false })
+      .limit(200),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
   if (i.error) throw new Error(i.error.message || "Erro ao carregar faturas");
@@ -121,6 +141,8 @@ async function fetchFaturasPage() {
     invoices: (i.data ?? []) as InvoiceRow[],
     // A tabela de pendentes só existe após aplicar a migration; sem ela, a página segue sem pulsar.
     pending: (p.error ? [] : (p.data ?? [])) as PendingImport[],
+    // Idem para a fila do WhatsApp: sem a migration, a seção aparece vazia.
+    whatsapp: (w.error ? [] : (w.data ?? [])) as WhatsAppQueue[],
   };
 }
 
@@ -149,6 +171,8 @@ function FaturasPage() {
   const [editClient, setEditClient] = useState<Client | null>(null);
   const [invoiceFor, setInvoiceFor] = useState<Client | null>(null);
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
+  const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [waSending, setWaSending] = useState(false);
 
   if (isLoading) {
     return (
@@ -184,6 +208,75 @@ function FaturasPage() {
   const pendingByClient = new Map<string, PendingImport>();
   for (const p of data.pending) {
     if (!pendingByClient.has(p.client_id)) pendingByClient.set(p.client_id, p);
+  }
+
+  // Mensagens de WhatsApp do mês selecionado na seção de fechamento.
+  const waRows = (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth);
+
+  /** Prepara o fechamento do mês: uma mensagem por cliente com fatura lançada. O envio sai do número da usina (fila whatsapp_queue). */
+  async function prepareWhatsApp() {
+    if (!data || !/^\d{4}-\d{2}$/.test(waMonth)) return;
+    setWaSending(true);
+    try {
+      const [y, m] = waMonth.split("-").map(Number);
+      const start = `${waMonth}-01`;
+      const end = new Date(y, m, 1).toISOString().slice(0, 10);
+      const { data: invs, error } = await supabase
+        .from("invoices")
+        .select("id,client_id,reference_date,client_pays,notes")
+        .gte("reference_date", start)
+        .lt("reference_date", end);
+      if (error) throw new Error(error.message);
+      const already = new Set(
+        (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth).map((w) => w.client_id),
+      );
+      const rows: { client_id: string; client_name: string; phone: string; reference_month: string; message_text: string; status: string }[] = [];
+      const noPhone: string[] = [];
+      const skipped: string[] = [];
+      for (const inv of invs ?? []) {
+        const c = data.clients.find((x) => x.id === inv.client_id);
+        if (!c || !c.active) continue;
+        if (already.has(c.id)) { skipped.push(c.name); continue; }
+        const phone = (c.phone ?? "").trim();
+        if (!phone) { noPhone.push(c.name); continue; }
+        rows.push({
+          client_id: c.id,
+          client_name: c.name,
+          phone,
+          reference_month: waMonth,
+          message_text: buildWhatsAppMessage({
+            clientName: c.name,
+            referenceMonth: waMonth,
+            clientPays: Number(inv.client_pays),
+            dueDate: invoiceDueDate(inv.notes) || null,
+          }),
+          status: "pending",
+        });
+      }
+      if (rows.length > 0) {
+        const { error: insError } = await supabase.from("whatsapp_queue").insert(rows);
+        if (insError) throw new Error(insError.message);
+      }
+      toast.success(rows.length > 0 ? `${rows.length} mensagem(ns) na fila para envio.` : "Nada novo para este mês.");
+      if (noPhone.length > 0) toast.warning(`Sem telefone cadastrado: ${noPhone.join(", ")}`);
+      if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    } catch (e) {
+      toast.error((e as Error)?.message || "Erro ao preparar mensagens");
+    } finally {
+      setWaSending(false);
+    }
+  }
+
+  /** Volta uma mensagem que falhou para a fila. */
+  async function retryWhatsApp(id: string) {
+    const { error: err } = await supabase
+      .from("whatsapp_queue")
+      .update({ status: "pending", error: null, sent_at: null })
+      .eq("id", id);
+    if (err) return toast.error(err.message);
+    toast.success("Mensagem voltou para a fila");
+    qc.invalidateQueries({ queryKey: ["faturas-page"] });
   }
 
   async function toggleActive(c: Client) {
@@ -236,6 +329,66 @@ function FaturasPage() {
           </Button>
         </div>
       </div>
+
+      {/* Mensagens WhatsApp — fechamento mensal */}
+      <Card className="glass-card border-border p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
+            <div>
+              <h2 className="text-base font-bold text-foreground">Mensagens WhatsApp</h2>
+              <p className="text-xs text-muted-foreground">
+                Fechamento do mês para os clientes com fatura lançada. O envio sai do número da usina.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input type="month" value={waMonth} onChange={(e) => setWaMonth(e.target.value)} className="w-44" />
+            <Button
+              onClick={prepareWhatsApp}
+              disabled={waSending}
+              className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
+            >
+              {waSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Enviar fechamento
+            </Button>
+          </div>
+        </div>
+        {waRows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nenhuma mensagem preparada para este mês.</p>
+        ) : (
+          <ul className="space-y-2">
+            {waRows.map((w) => (
+              <li key={w.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-accent/40 p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-bold text-foreground">{w.client_name}</span>
+                    <span className="text-muted-foreground">{w.phone}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                        w.status === "sent"
+                          ? "bg-emerald-500/15 text-emerald-600"
+                          : w.status === "failed"
+                            ? "bg-red-500/15 text-red-600"
+                            : "bg-amber-500/15 text-amber-600"
+                      }`}
+                    >
+                      {w.status === "sent" ? "Enviada" : w.status === "failed" ? "Falhou" : "Na fila"}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">{w.message_text}</p>
+                  {w.error ? <p className="mt-1 text-xs text-red-500">{w.error}</p> : null}
+                </div>
+                {w.status === "failed" ? (
+                  <Button variant="outline" size="sm" onClick={() => retryWhatsApp(w.id)} className="gap-1">
+                    <RefreshCw className="h-3.5 w-3.5" /> Reenviar
+                  </Button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
 
       {shown.length === 0 && (
         <Card className="glass-card border-border p-10 text-center text-muted-foreground">
