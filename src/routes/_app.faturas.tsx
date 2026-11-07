@@ -241,6 +241,26 @@ function FaturasPage() {
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
+  const [waViewing, setWaViewing] = useState<string | null>(null);
+
+  /** Abre o PDF da fatura anexada numa nova aba (URL assinada de 1h no bucket privado). */
+  async function viewWaAttachment(key: string, path: string) {
+    const win = window.open("", "_blank");
+    setWaViewing(key);
+    try {
+      const { data: signed, error } = await supabase.storage
+        .from("faturas_v3_privado_v2")
+        .createSignedUrl(path, 3600);
+      if (error) throw error;
+      if (win) win.location.href = signed.signedUrl;
+      else window.location.href = signed.signedUrl;
+    } catch (e) {
+      if (win) win.close();
+      toast.error("Erro ao abrir anexo: " + ((e as Error)?.message || "tente de novo"));
+    } finally {
+      setWaViewing(null);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -446,12 +466,9 @@ function FaturasPage() {
       <Card className="glass-card border-border p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <MessageCircle className="h-5 w-5 shrink-0 text-primary" />
+            <img src="/whatsapp-logo.svg" alt="WhatsApp" className="h-6 w-6 shrink-0" />
             <div>
               <h2 className="text-base font-bold text-foreground">Mensagens WhatsApp</h2>
-              <p className="text-xs text-muted-foreground">
-                Fechamento do mês para os clientes com fatura lançada. O envio sai do número da usina.
-              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -488,9 +505,14 @@ function FaturasPage() {
               <div key={p.client_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
                 <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
-                <p className="text-xs text-muted-foreground">
-                  Anexo: {p.attachment_path ? "fatura do mês (PDF)" : "sem PDF da fatura neste lançamento"}
-                </p>
+                {p.attachment_path ? (
+                  <Button variant="outline" size="sm" onClick={() => viewWaAttachment(p.client_id, p.attachment_path!)} disabled={waViewing === p.client_id} className="gap-1">
+                    {waViewing === p.client_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                    Ver fatura (PDF)
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Sem PDF da fatura neste lançamento</p>
+                )}
               </div>
             ))}
           </div>
@@ -542,9 +564,14 @@ function FaturasPage() {
                     <div className="space-y-2 border-t border-border p-3">
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Anexo: {w.attachment_path ? "fatura do mês (PDF)" : "sem PDF da fatura neste lançamento"}
-                      </p>
+                      {w.attachment_path ? (
+                        <Button variant="outline" size="sm" onClick={() => viewWaAttachment(w.id, w.attachment_path)} disabled={waViewing === w.id} className="gap-1">
+                          {waViewing === w.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Paperclip className="h-3.5 w-3.5" />}
+                          Ver fatura (PDF)
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Sem PDF da fatura neste lançamento</p>
+                      )}
                       {w.error ? <p className="text-xs text-red-500">{w.error}</p> : null}
                       {w.status === "failed" ? (
                         <Button variant="outline" size="sm" onClick={() => retryWhatsApp(w.id)} className="gap-1">
