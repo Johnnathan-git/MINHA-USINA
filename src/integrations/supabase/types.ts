@@ -369,13 +369,13 @@ export type Database = {
         Insert: {
           attachment_url?: string | null
           client_id: string
-          consumption_kw?: number
+          consumption_kw: number
           created_at?: string
           distributor_invoice?: number
           due_date?: string | null
           id?: string
           interest_fine?: number
-          price_kw?: number
+          price_kw: number
           price_kw_exact?: string | null
           public_lighting?: number
           reference_date: string
@@ -407,62 +407,6 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "pending_invoice_imports_client_id_fkey"
-            columns: ["client_id"]
-            isOneToOne: false
-            referencedRelation: "clients"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      whatsapp_queue: {
-        Row: {
-          attachment_path: string | null
-          client_id: string
-          client_name: string
-          created_at: string
-          error: string | null
-          id: string
-          message_text: string
-          phone: string
-          reference_month: string
-          sent_at: string | null
-          status: string
-          table_data: unknown
-          updated_at: string
-        }
-        Insert: {
-          attachment_path?: string | null
-          client_id: string
-          client_name: string
-          created_at?: string
-          error?: string | null
-          id?: string
-          message_text: string
-          phone: string
-          reference_month: string
-          sent_at?: string | null
-          status?: string
-          table_data?: unknown
-          updated_at?: string
-        }
-        Update: {
-          attachment_path?: string | null
-          client_id?: string
-          client_name?: string
-          created_at?: string
-          error?: string | null
-          id?: string
-          message_text?: string
-          phone?: string
-          reference_month?: string
-          sent_at?: string | null
-          status?: string
-          table_data?: unknown
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "whatsapp_queue_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -668,6 +612,62 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      whatsapp_queue: {
+        Row: {
+          attachment_path: string | null
+          client_id: string
+          client_name: string
+          created_at: string
+          error: string | null
+          id: string
+          message_text: string
+          phone: string
+          reference_month: string
+          sent_at: string | null
+          status: string
+          table_data: Json | null
+          updated_at: string
+        }
+        Insert: {
+          attachment_path?: string | null
+          client_id: string
+          client_name: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          message_text: string
+          phone: string
+          reference_month: string
+          sent_at?: string | null
+          status?: string
+          table_data?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          attachment_path?: string | null
+          client_id?: string
+          client_name?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          message_text?: string
+          phone?: string
+          reference_month?: string
+          sent_at?: string | null
+          status?: string
+          table_data?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_queue_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
