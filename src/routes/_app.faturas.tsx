@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles } from "@/lib/format";
-import { buildWhatsAppMessage } from "@/lib/whatsapp";
+import { buildWhatsAppMessage, PIX_KEY, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -69,6 +69,17 @@ type WhatsAppQueue = {
   error: string | null;
   created_at: string;
   sent_at: string | null;
+};
+
+/** Prévia do fechamento antes de entrar na fila: o usuário analisa e confirma. */
+type WhatsAppPreview = {
+  client_id: string;
+  client_name: string;
+  phone: string;
+  reference_month: string;
+  message_text: string;
+  table_data: TableData;
+  attachment_path: string | null;
 };
 
 /** Status de pagamento em notes: [[status:pendente]] — sem tag = pago */
@@ -173,6 +184,8 @@ function FaturasPage() {
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
+  const [waPreview, setWaPreview] = useState<WhatsAppPreview[] | null>(null);
+  const [waConfirming, setWaConfirming] = useState(false);
 
   if (isLoading) {
     return (
@@ -213,8 +226,8 @@ function FaturasPage() {
   // Mensagens de WhatsApp do mês selecionado na seção de fechamento.
   const waRows = (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth);
 
-  /** Prepara o fechamento do mês: uma mensagem por cliente com fatura lançada. O envio sai do número da usina (fila whatsapp_queue). */
-  async function prepareWhatsApp() {
+  /** Monta a prévia do fechamento do mês para o usuário analisar antes de enviar. Nada entra na fila aqui. */
+  async function previewWhatsApp() {
     if (!data || !/^\d{4}-\d{2}$/.test(waMonth)) return;
     setWaSending(true);
     try {
@@ -223,14 +236,14 @@ function FaturasPage() {
       const end = new Date(y, m, 1).toISOString().slice(0, 10);
       const { data: invs, error } = await supabase
         .from("invoices")
-        .select("id,client_id,reference_date,client_pays,notes")
+        .select("id,client_id,reference_date,consumption_kw,price_kw,public_lighting,interest_fine,value_without_plant,client_pays,notes,attachment_url")
         .gte("reference_date", start)
         .lt("reference_date", end);
       if (error) throw new Error(error.message);
       const already = new Set(
         (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth).map((w) => w.client_id),
       );
-      const rows: { client_id: string; client_name: string; phone: string; reference_month: string; message_text: string; status: string }[] = [];
+      const rows: WhatsAppPreview[] = [];
       const noPhone: string[] = [];
       const skipped: string[] = [];
       for (const inv of invs ?? []) {
@@ -249,22 +262,60 @@ function FaturasPage() {
             referenceMonth: waMonth,
             clientPays: Number(inv.client_pays),
             dueDate: invoiceDueDate(inv.notes) || null,
+            pixKey: PIX_KEY || undefined,
           }),
-          status: "pending",
+          table_data: {
+            referenceMonth: waMonth,
+            ucNumber: c.uc_number,
+            consumptionKw: Number(inv.consumption_kw),
+            priceKw: formatPriceKw(Number(inv.price_kw), invoiceExactPrice(inv.notes, Number(inv.price_kw))),
+            publicLighting: Number(inv.public_lighting),
+            interestFine: Number(inv.interest_fine),
+            valueWithoutPlant: Number(inv.value_without_plant),
+            clientPays: Number(inv.client_pays),
+            discountPct: Number(c.discount_pct),
+          },
+          attachment_path: inv.attachment_url ?? null,
         });
       }
-      if (rows.length > 0) {
-        const { error: insError } = await supabase.from("whatsapp_queue").insert(rows);
-        if (insError) throw new Error(insError.message);
+      if (rows.length === 0) {
+        toast.info("Nada novo para este mês.");
       }
-      toast.success(rows.length > 0 ? `${rows.length} mensagem(ns) na fila para envio.` : "Nada novo para este mês.");
       if (noPhone.length > 0) toast.warning(`Sem telefone cadastrado: ${noPhone.join(", ")}`);
       if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
-      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+      setWaPreview(rows);
     } catch (e) {
       toast.error((e as Error)?.message || "Erro ao preparar mensagens");
     } finally {
       setWaSending(false);
+    }
+  }
+
+  /** Confirma a prévia e coloca as mensagens na fila de envio. */
+  async function confirmWhatsApp() {
+    if (!waPreview || waPreview.length === 0) return;
+    setWaConfirming(true);
+    try {
+      const { error: insError } = await supabase.from("whatsapp_queue").insert(
+        waPreview.map((p) => ({
+          client_id: p.client_id,
+          client_name: p.client_name,
+          phone: p.phone,
+          reference_month: p.reference_month,
+          message_text: p.message_text,
+          status: "pending",
+          table_data: p.table_data,
+          attachment_path: p.attachment_path,
+        })),
+      );
+      if (insError) throw new Error(insError.message);
+      toast.success(`${waPreview.length} mensagem(ns) na fila para envio.`);
+      setWaPreview(null);
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    } catch (e) {
+      toast.error((e as Error)?.message || "Erro ao confirmar envio");
+    } finally {
+      setWaConfirming(false);
     }
   }
 
@@ -345,7 +396,7 @@ function FaturasPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Input type="month" value={waMonth} onChange={(e) => setWaMonth(e.target.value)} className="w-44" />
             <Button
-              onClick={prepareWhatsApp}
+              onClick={previewWhatsApp}
               disabled={waSending}
               className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
             >
@@ -354,6 +405,61 @@ function FaturasPage() {
             </Button>
           </div>
         </div>
+        {waPreview !== null && waPreview.length > 0 ? (
+          <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-foreground">Prévia do que será enviado — confira antes de confirmar</h3>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setWaPreview(null)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" onClick={confirmWhatsApp} disabled={waConfirming} className="gap-2">
+                  {waConfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Confirmar envio
+                </Button>
+              </div>
+            </div>
+            {waPreview.map((p) => (
+              <div key={p.client_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
+                <div className="bg-[#FDE047] px-2 py-1 text-center text-sm font-bold uppercase text-black">
+                  {p.client_name}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-center text-xs">
+                    <thead>
+                      <tr className="[&>th]:border [&>th]:border-border [&>th]:px-1.5 [&>th]:py-1 [&>th]:font-bold">
+                        <th>MÊS REFERÊNCIA</th>
+                        <th>UC</th>
+                        <th>CONSUMO KW</th>
+                        <th>PREÇO KW</th>
+                        <th>ILUM. PÚBLICA</th>
+                        <th>JUROS MORATÓRIA/MULTA</th>
+                        <th>VALOR S/ USINA</th>
+                        <th>VALOR C/ {p.table_data.discountPct}% DESCONTO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="[&>td]:border [&>td]:border-border [&>td]:px-1.5 [&>td]:py-1 [&>td]:tabular-nums">
+                        <td>{monthLabelFromISO(`${p.table_data.referenceMonth}-01`)}</td>
+                        <td>{p.table_data.ucNumber}</td>
+                        <td>{p.table_data.consumptionKw}</td>
+                        <td>{p.table_data.priceKw}</td>
+                        <td>{brl(p.table_data.publicLighting)}</td>
+                        <td>{brl(p.table_data.interestFine)}</td>
+                        <td>{brl(p.table_data.valueWithoutPlant)}</td>
+                        <td className="font-bold text-red-600">{brl(p.table_data.clientPays)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
+                <p className="text-xs text-muted-foreground">
+                  Anexo: {p.attachment_path ? "fatura do mês (PDF)" : "sem PDF da fatura neste lançamento"}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {waRows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhuma mensagem preparada para este mês.</p>
         ) : (

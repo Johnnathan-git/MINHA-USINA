@@ -416,6 +416,7 @@ export type Database = {
       }
       whatsapp_queue: {
         Row: {
+          attachment_path: string | null
           client_id: string
           client_name: string
           created_at: string
@@ -426,9 +427,11 @@ export type Database = {
           reference_month: string
           sent_at: string | null
           status: string
+          table_data: unknown
           updated_at: string
         }
         Insert: {
+          attachment_path?: string | null
           client_id: string
           client_name: string
           created_at?: string
@@ -439,9 +442,11 @@ export type Database = {
           reference_month: string
           sent_at?: string | null
           status?: string
+          table_data?: unknown
           updated_at?: string
         }
         Update: {
+          attachment_path?: string | null
           client_id?: string
           client_name?: string
           created_at?: string
@@ -452,6 +457,7 @@ export type Database = {
           reference_month?: string
           sent_at?: string | null
           status?: string
+          table_data?: unknown
           updated_at?: string
         }
         Relationships: [

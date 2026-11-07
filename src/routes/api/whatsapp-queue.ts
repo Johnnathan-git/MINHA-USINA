@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { timingSafeEqual } from 'node:crypto'
-import { buildWhatsAppMessage } from '@/lib/whatsapp'
+import { buildWhatsAppMessage, PIX_KEY, formatPriceKw } from '@/lib/whatsapp'
 
 /**
  * Fila de mensagens de WhatsApp (fechamento mensal).
@@ -12,6 +12,8 @@ import { buildWhatsAppMessage } from '@/lib/whatsapp'
  * - POST { action: "ack", id, status: "sent" | "failed", error? } — o
  *   remetente marca o resultado de cada envio.
  * - POST { action: "retry", id } — volta uma falha para pendente.
+ * - POST { action: "sign", path } — URL assinada (1h) do PDF da fatura no
+ *   bucket privado, para o remetente baixar o anexo.
  *
  * Segurança: mesmo segredo PENDING_IMPORT_SECRET do /api/import-pending,
  * no header x-import-secret. O botão em Faturas não usa esta rota (o
@@ -31,7 +33,7 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server')
         let q = supabaseAdmin
           .from('whatsapp_queue')
-          .select('id,client_id,client_name,phone,reference_month,message_text,status,error,created_at,sent_at')
+          .select('id,client_id,client_name,phone,reference_month,message_text,table_data,attachment_path,status,error,created_at,sent_at')
           .order('created_at', { ascending: true })
         if (status) q = q.eq('status', status)
         if (referenceMonth) q = q.eq('reference_month', referenceMonth)
@@ -84,6 +86,16 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
           return Response.json({ status: 'ok' })
         }
 
+        if (action === 'sign') {
+          const path = String(body?.path ?? '')
+          if (!path) return Response.json({ error: 'path é obrigatório.' }, { status: 400 })
+          const { data, error } = await supabaseAdmin.storage
+            .from('faturas_v3_privado_v2')
+            .createSignedUrl(path, 3600)
+          if (error) return Response.json({ error: error.message }, { status: 500 })
+          return Response.json({ signed_url: data.signedUrl })
+        }
+
         if (action === 'prepare') {
           const referenceMonth = String(body?.reference_month ?? '')
           if (!/^\d{4}-\d{2}$/.test(referenceMonth)) {
@@ -95,7 +107,7 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
 
           const { data: invoices, error: invError } = await supabaseAdmin
             .from('invoices')
-            .select('id,client_id,reference_date,client_pays,notes,clients(id,name,phone,active)')
+            .select('id,client_id,reference_date,consumption_kw,price_kw,public_lighting,interest_fine,value_without_plant,client_pays,notes,attachment_url,clients(id,name,phone,active,uc_number,discount_pct)')
             .gte('reference_date', start)
             .lt('reference_date', end)
           if (invError) return Response.json({ error: invError.message }, { status: 500 })
@@ -118,11 +130,13 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
             const phone = String(client.phone ?? '').trim()
             if (!phone) { skippedNoPhone.push(client.name); continue }
             const due = String(inv.notes ?? '').match(/\[\[due:(\d{4}-\d{2}-\d{2})\]\]/)?.[1] ?? null
+            const exact = String(inv.notes ?? '').match(/\[\[price_kw_exact:([^\]]+)\]\]/)?.[1] ?? null
             const messageText = buildWhatsAppMessage({
               clientName: client.name,
               referenceMonth,
               clientPays: Number(inv.client_pays),
               dueDate: due,
+              pixKey: PIX_KEY || undefined,
             })
             const { error: insertError } = await supabaseAdmin.from('whatsapp_queue').insert({
               client_id: client.id,
@@ -131,6 +145,18 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
               reference_month: referenceMonth,
               message_text: messageText,
               status: 'pending',
+              table_data: {
+                referenceMonth,
+                ucNumber: client.uc_number,
+                consumptionKw: Number(inv.consumption_kw),
+                priceKw: formatPriceKw(Number(inv.price_kw), exact),
+                publicLighting: Number(inv.public_lighting),
+                interestFine: Number(inv.interest_fine),
+                valueWithoutPlant: Number(inv.value_without_plant),
+                clientPays: Number(inv.client_pays),
+                discountPct: Number(client.discount_pct),
+              },
+              attachment_path: inv.attachment_url ?? null,
             })
             if (insertError) return Response.json({ error: insertError.message }, { status: 500 })
             created.push(client.name)
