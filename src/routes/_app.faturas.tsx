@@ -495,22 +495,11 @@ function FaturasPage() {
             ))}
           </div>
         ) : null}
-        {waRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhuma mensagem preparada para este mês.</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {monthLabelFromISO(`${waMonth}-01`)}: {waSent} enviada(s) · {waPending} na fila · {waFailed} falhou(aram)
-            {" — "}
-            <button onClick={() => setWaHistoryOpen(true)} className="font-bold text-primary underline-offset-2 hover:underline">
-              ver histórico
-            </button>
-          </p>
-        )}
       </Card>
 
       {/* Histórico de envios do mês — abre por botão para a tela não encher. Toque em um cliente para conferir o que foi enviado. */}
       <Dialog open={waHistoryOpen} onOpenChange={(o) => { setWaHistoryOpen(o); if (!o) setWaExpanded(null); }}>
-        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Histórico de envios — {monthLabelFromISO(`${waMonth}-01`)}</DialogTitle>
           </DialogHeader>
