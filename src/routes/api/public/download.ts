@@ -7,6 +7,8 @@ export const Route = createFileRoute('/api/public/download')({
         const url = new URL(request.url)
         const tokenUrl = url.searchParams.get('token')
         const name = url.searchParams.get('name') || 'fatura.pdf'
+        // 'inline' abre o PDF no navegador; o padrão 'attachment' baixa o arquivo.
+        const disposition = url.searchParams.get('disposition') === 'inline' ? 'inline' : 'attachment'
 
         if (!tokenUrl) {
           return new Response('Token missing', { status: 400 })
@@ -21,7 +23,7 @@ export const Route = createFileRoute('/api/public/download')({
           return new Response(res.body, {
             headers: {
               'Content-Type': res.headers.get('Content-Type') || 'application/pdf',
-              'Content-Disposition': `attachment; filename="${encodeURIComponent(name)}"`,
+              'Content-Disposition': `${disposition}; filename="${encodeURIComponent(name)}"`,
               'Cache-Control': 'no-cache',
             },
           })

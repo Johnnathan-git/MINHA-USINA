@@ -243,7 +243,7 @@ function FaturasPage() {
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
   const [waViewing, setWaViewing] = useState<string | null>(null);
 
-  /** Abre o PDF da fatura anexada numa nova aba (URL assinada de 1h no bucket privado). */
+  /** Abre o PDF da fatura anexada numa nova aba. Passa pelo proxy do app (/api/public/download) porque o Chrome bloqueia abrir direto o domínio do Supabase (ERR_BLOCKED_BY_CLIENT). */
   async function viewWaAttachment(key: string, path: string) {
     const win = window.open("", "_blank");
     setWaViewing(key);
@@ -252,8 +252,10 @@ function FaturasPage() {
         .from("faturas_v3_privado_v2")
         .createSignedUrl(path, 3600);
       if (error) throw error;
-      if (win) win.location.href = signed.signedUrl;
-      else window.location.href = signed.signedUrl;
+      const fileName = path.split("/").pop() || "fatura.pdf";
+      const proxyUrl = `/api/public/download?token=${encodeURIComponent(signed.signedUrl)}&name=${encodeURIComponent(fileName)}&disposition=inline`;
+      if (win) win.location.href = proxyUrl;
+      else window.location.href = proxyUrl;
     } catch (e) {
       if (win) win.close();
       toast.error("Erro ao abrir anexo: " + ((e as Error)?.message || "tente de novo"));
@@ -465,14 +467,12 @@ function FaturasPage() {
       {/* Mensagens WhatsApp — fechamento mensal */}
       <Card className="glass-card border-border p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <img src="/whatsapp-logo.svg" alt="WhatsApp" className="h-6 w-6 shrink-0" />
-            <div>
-              <h2 className="text-base font-bold text-foreground">Mensagens WhatsApp</h2>
-            </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <img src="/whatsapp-logo.svg" alt="WhatsApp" className="h-7 w-7 shrink-0" />
+            <h2 className="text-lg font-bold text-foreground">Mensagens WhatsApp</h2>
+            <Input type="month" value={waMonth} onChange={(e) => setWaMonth(e.target.value)} className="w-44" />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Input type="month" value={waMonth} onChange={(e) => setWaMonth(e.target.value)} className="w-44" />
             <Button
               onClick={previewWhatsApp}
               disabled={waSending}
