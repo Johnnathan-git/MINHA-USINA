@@ -46,7 +46,13 @@ export function PdfViewer({ url }: { url: string }) {
     })();
     return () => {
       cancelled = true;
-      void doc?.destroy();
+      try {
+        const d = doc as unknown as { destroy?: () => unknown; cleanup?: () => unknown } | null;
+        if (d && typeof d.destroy === "function") void d.destroy();
+        else if (d && typeof d.cleanup === "function") void d.cleanup();
+      } catch {
+        /* ignore */
+      }
     };
   }, [url]);
 
