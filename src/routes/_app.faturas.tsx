@@ -205,6 +205,17 @@ function MonthYearSelect({ value, onChange, monthClassName, yearClassName }: {
   );
 }
 
+/** Renderiza o texto do WhatsApp com a chave Pix em monospace (como o cliente vê no app). */
+function renderWaText(text: string) {
+  return text.split("`").map((part, i) =>
+    i % 2 === 1 ? (
+      <code key={i} className="rounded bg-black/10 px-1 font-mono text-[13px]">{part}</code>
+    ) : (
+      part
+    ),
+  );
+}
+
 /** Tabela do fechamento (faixa com o nome na cor do cliente + valores). Usada na prévia do envio e no detalhe do histórico. */
 function WaTablePreview({ clientName, tableData }: { clientName: string; tableData: TableData }) {
   return (
@@ -359,6 +370,15 @@ function FaturasPage() {
   const waStatus = data.whatsappStatus ?? null;
   // Modelo da mensagem de fechamento (editável no diálogo "Editar mensagem").
   const waTemplate = data.waTemplate ?? null;
+  // Espelho do diálogo "Editar mensagem": exemplo com os dados do Leomar (out/2026).
+  const waTemplatePreview = buildWhatsAppMessage({
+    clientName: "Leomar",
+    referenceMonth: "2026-10",
+    clientPays: 853.34,
+    dueDate: "2026-11-07",
+    pixKey: data.pixKey ?? undefined,
+    template: waTemplateDraft,
+  });
 
   /** Monta a prévia do fechamento do mês para o usuário analisar antes de enviar. Nada entra na fila aqui. */
   async function previewWhatsApp() {
@@ -712,6 +732,13 @@ function FaturasPage() {
               rows={7}
               className="mt-1 font-mono text-sm"
             />
+            <div>
+              <Label>Como o cliente vai ver</Label>
+              <div className="mt-1 whitespace-pre-wrap rounded-lg bg-[#d9fdd3] p-3 text-sm text-gray-900">
+                {renderWaText(waTemplatePreview)}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">Exemplo com os dados do Leomar (outubro/2026).</p>
+            </div>
             <div className="rounded-lg bg-accent p-3 text-xs text-muted-foreground space-y-1">
               <p className="font-bold text-foreground">O que vai no lugar de cada código:</p>
               <p><code className="font-bold text-foreground">{"{nome}"}</code> — nome do cliente</p>
