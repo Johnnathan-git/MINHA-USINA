@@ -160,6 +160,8 @@ def process_demae_message(message_id, dry_run):
             "amount": parsed["total"],
             "reference_date": f"{year}-{mon}-01",
             "notes": PENDING_NOTES,
+            "due_date": to_iso_date(parsed.get("due_date")),
+            "pdf_base64": base64.b64encode(open(pdf_path, "rb").read()).decode(),
         }
         result["expense_amount"] = expense["amount"]
         if dry_run:
@@ -231,15 +233,19 @@ def post_via_helper(helper, payload):
     return body.get("http", 0), body
 
 
-def build_expense_payload(parsed):
+def build_expense_payload(parsed, pdf_bytes=None):
     mon, year = parsed["reference"].split("/")
-    return {
+    payload = {
         "category": EXPENSE_CATEGORY,
         "description": ENERGY_DESCRIPTION,
         "amount": parsed["distributor_invoice"],
         "reference_date": f"{year}-{MONTHS[mon]}-01",
         "notes": PENDING_NOTES,
+        "due_date": to_iso_date(parsed.get("due_date")),
     }
+    if pdf_bytes:
+        payload["pdf_base64"] = base64.b64encode(pdf_bytes).decode()
+    return payload
 
 
 def process_message(message_id, dry_run):
@@ -267,7 +273,7 @@ def process_message(message_id, dry_run):
     }
     if parsed["uc_number"] == GENERATING_UC:
         result["kind"] = "expense_energy"
-        expense = build_expense_payload(parsed)
+        expense = build_expense_payload(parsed, pdf_bytes)
         result["expense_amount"] = expense["amount"]
         if dry_run:
             result["status"] = "dry_run_ok"
@@ -298,6 +304,14 @@ def internet_target_months(today=None):
     return targets
 
 
+def internet_boleto_path(y, m):
+    """Boleto da internet do mês (quando o provedor manda o arquivo).
+    Os boletos ficam em boletos-internet/AAAA-MM.pdf; sem o arquivo, a
+    despesa é lançada sem anexo (o botão no Fluxo de Caixa fica sem boleto)."""
+    path = os.path.join(HERE, "boletos-internet", f"{y}-{m:02d}.pdf")
+    return path if os.path.isfile(path) else None
+
+
 def ensure_internet_expense(dry_run):
     """Garante as despesas fixas de internet devidas até hoje."""
     from datetime import date
@@ -309,7 +323,13 @@ def ensure_internet_expense(dry_run):
             "amount": INTERNET_AMOUNT,
             "reference_date": f"{y}-{m:02d}-01",
             "notes": PENDING_NOTES,
+            # O boleto vence no dia 10 (conferido no arquivo do provedor).
+            "due_date": f"{y}-{m:02d}-10",
         }
+        boleto = internet_boleto_path(y, m)
+        if boleto:
+            with open(boleto, "rb") as f:
+                payload["pdf_base64"] = base64.b64encode(f.read()).decode()
         result = {"kind": "expense_internet", "reference": f"{y}-{m:02d}",
                   "amount": INTERNET_AMOUNT}
         if dry_run:

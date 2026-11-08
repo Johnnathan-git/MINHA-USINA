@@ -20,6 +20,7 @@ import { Route as AppFluxoCaixaRouteImport } from './routes/_app.fluxo-caixa'
 import { Route as AppInventarioRouteImport } from './routes/_app.inventario'
 import { Route as AppRelatorioRouteImport } from './routes/_app.relatorio'
 import { Route as AppResultadoRouteImport } from './routes/_app.resultado'
+import { Route as ApiExpenseWhatsappQueueRouteImport } from './routes/api/expense-whatsapp-queue'
 import { Route as ApiImportExpenseRouteImport } from './routes/api/import-expense'
 import { Route as ApiImportPendingRouteImport } from './routes/api/import-pending'
 import { Route as ApiWhatsappQueueRouteImport } from './routes/api/whatsapp-queue'
@@ -79,6 +80,11 @@ const AppResultadoRoute = AppResultadoRouteImport.update({
   path: '/resultado',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiExpenseWhatsappQueueRoute = ApiExpenseWhatsappQueueRouteImport.update({
+  id: '/api/expense-whatsapp-queue',
+  path: '/api/expense-whatsapp-queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiImportExpenseRoute = ApiImportExpenseRouteImport.update({
   id: '/api/import-expense',
   path: '/api/import-expense',
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/inventario': typeof AppInventarioRoute
   '/relatorio': typeof AppRelatorioRoute
   '/resultado': typeof AppResultadoRoute
+  '/api/expense-whatsapp-queue': typeof ApiExpenseWhatsappQueueRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/inventario': typeof AppInventarioRoute
   '/relatorio': typeof AppRelatorioRoute
   '/resultado': typeof AppResultadoRoute
+  '/api/expense-whatsapp-queue': typeof ApiExpenseWhatsappQueueRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/_app/inventario': typeof AppInventarioRoute
   '/_app/relatorio': typeof AppRelatorioRoute
   '/_app/resultado': typeof AppResultadoRoute
+  '/api/expense-whatsapp-queue': typeof ApiExpenseWhatsappQueueRoute
   '/api/import-expense': typeof ApiImportExpenseRoute
   '/api/import-pending': typeof ApiImportPendingRoute
   '/api/whatsapp-queue': typeof ApiWhatsappQueueRoute
@@ -163,6 +172,7 @@ export interface FileRouteTypes {
     | '/inventario'
     | '/relatorio'
     | '/resultado'
+    | '/api/expense-whatsapp-queue'
     | '/api/import-expense'
     | '/api/import-pending'
     | '/api/whatsapp-queue'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/inventario'
     | '/relatorio'
     | '/resultado'
+    | '/api/expense-whatsapp-queue'
     | '/api/import-expense'
     | '/api/import-pending'
     | '/api/whatsapp-queue'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/_app/inventario'
     | '/_app/relatorio'
     | '/_app/resultado'
+    | '/api/expense-whatsapp-queue'
     | '/api/import-expense'
     | '/api/import-pending'
     | '/api/whatsapp-queue'
@@ -206,6 +218,7 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiExpenseWhatsappQueueRoute: typeof ApiExpenseWhatsappQueueRoute
   ApiImportExpenseRoute: typeof ApiImportExpenseRoute
   ApiImportPendingRoute: typeof ApiImportPendingRoute
   ApiWhatsappQueueRoute: typeof ApiWhatsappQueueRoute
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppResultadoRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/expense-whatsapp-queue': {
+      id: '/api/expense-whatsapp-queue'
+      path: '/api/expense-whatsapp-queue'
+      fullPath: '/api/expense-whatsapp-queue'
+      preLoaderRoute: typeof ApiExpenseWhatsappQueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/import-expense': {
       id: '/api/import-expense'
       path: '/api/import-expense'
@@ -350,6 +370,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiExpenseWhatsappQueueRoute: ApiExpenseWhatsappQueueRoute,
   ApiImportExpenseRoute: ApiImportExpenseRoute,
   ApiImportPendingRoute: ApiImportPendingRoute,
   ApiWhatsappQueueRoute: ApiWhatsappQueueRoute,

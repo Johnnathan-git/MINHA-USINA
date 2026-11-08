@@ -28,13 +28,23 @@ Secrets, e é enviado no header `x-import-secret` de cada chamada.
   ignoradas.
 - **Energia da usina:** a fatura da UC geradora (423837601225) vira a
   despesa "Fatura de Energia Usina" (categoria Fatura Usina, pendente),
-  com o valor total da fatura.
+  com o valor total da fatura. O PDF da fatura é anexado à despesa e o
+  vencimento vai em notes ([[due:...]]), para o envio no grupo.
 - **Água (Demae):** só a matrícula 59289-7 é da usina e vira a despesa
   "Fatura de Agua Usina". Outras matrículas no nome do usuário (outros
-  imóveis) são ignoradas.
+  imóveis) são ignoradas. O PDF e o vencimento também são anexados.
 - **Internet:** despesa fixa "Fatura de Internet Usina" de R$ 79,00. A do
   mês M é lançada no dia 25 do mês M-1; a rotina também garante a do mês
-  corrente.
+  corrente. Se existir o boleto em `boletos-internet/AAAA-MM.pdf` (pasta
+  local, não vai para o repositório — contém dados pessoais), ele é
+  anexado à despesa; o vencimento é o dia 10. Os boletos de nov e dez/2026
+  vieram do provedor (INFINITY GO): R$ 89,00 com R$ 10,00 de desconto até
+  o vencimento = R$ 79,00.
+- **Envio no grupo:** o botão "Enviar no grupo" no Fluxo de Caixa coloca
+  a despesa (energia, água ou internet com boleto) na fila
+  `expense_whatsapp_queue`; o remetente envia o PDF + mensagem para o
+  grupo USINA FINANCEIRO, para o irmão pagar. Sem boleto anexado, o botão
+  fica indisponível ("Sem boleto").
 - As despesas entram direto como pendentes, sem revisão. A conferência de
   duplicata é por categoria + descrição + mês.
 

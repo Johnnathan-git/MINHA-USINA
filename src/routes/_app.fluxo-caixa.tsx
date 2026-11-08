@@ -31,7 +31,7 @@ import {
   History,
   Search,
 } from "lucide-react";
-import { brl, monthLabel, EXPENSE_CATEGORIES, initial } from "@/lib/format";
+import { brl, monthLabel, monthLabelLong, formatDateBR, EXPENSE_CATEGORIES, initial } from "@/lib/format";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -54,6 +54,18 @@ type Expense = {
   installment_group?: string | null;
   installment_no?: number | null;
   installment_total?: number | null;
+  attachment_path?: string | null;
+};
+
+/** Envio de uma despesa da usina no WhatsApp (tabela expense_whatsapp_queue). */
+type ExpenseWhatsAppQueue = {
+  id: string;
+  expense_id: string;
+  message_text: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
 };
 
 type Client = { id: string; name: string; color: string };
@@ -230,21 +242,38 @@ const fluxoQ = queryOptions({
   queryKey: ["fluxo-page"],
   staleTime: 30_000,
   queryFn: async () => {
-    const [i, e, c] = await Promise.all([
+    const [i, c, w] = await Promise.all([
       supabase.from("invoices").select("id,client_id,reference_date,client_pays,distributor_invoice,notes"),
-      supabase
-        .from("expenses")
-        .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total")
-        .order("reference_date", { ascending: false }),
       supabase.from("clients").select("id,name,color"),
+      supabase
+        .from("expense_whatsapp_queue")
+        .select("id,expense_id,message_text,status,error,created_at,sent_at")
+        .order("created_at", { ascending: false })
+        .limit(200),
     ]);
     if (i.error) throw i.error;
-    if (e.error) throw e.error;
     if (c.error) throw c.error;
+    // attachment_path só existe após aplicar a migration; sem ela, a página
+    // segue sem o botão de envio (mesmo cuidado da página Faturas).
+    let e = await supabase
+      .from("expenses")
+      .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total,attachment_path")
+      .order("reference_date", { ascending: false });
+    if (e.error) {
+      e = await supabase
+        .from("expenses")
+        .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total")
+        .order("reference_date", { ascending: false });
+    }
+    if (e.error) throw e.error;
     return {
       invoices: (i.data ?? []) as Invoice[],
-      expenses: (e.data ?? []) as Expense[],
+      expenses: (e.data ?? []).map((x: any) => ({
+        ...x,
+        attachment_path: x.attachment_path ?? null,
+      })) as Expense[],
       clients: (c.data ?? []) as Client[],
+      expenseWaQueue: (w.error ? [] : (w.data ?? [])) as ExpenseWhatsAppQueue[],
     };
   },
 });
@@ -365,6 +394,54 @@ function Fluxo() {
   }, [data.expenses]);
   const monthInvoices = data.invoices.filter((i) => i.reference_date.startsWith(monthKey));
   const monthExpenses = normalExpenses.filter((e) => e.reference_date.startsWith(monthKey));
+
+  /** Último envio no WhatsApp de cada despesa (a fila vem ordenada por criação). */
+  const expenseWaByExpense = useMemo(() => {
+    const map = new Map<string, ExpenseWhatsAppQueue>();
+    for (const row of data.expenseWaQueue) {
+      if (!map.has(row.expense_id)) map.set(row.expense_id, row);
+    }
+    return map;
+  }, [data.expenseWaQueue]);
+
+  /** Mensagem que acompanha o boleto no grupo (o irmão paga a despesa). */
+  function buildExpenseWhatsAppMessage(e: Expense): string {
+    const label = /internet/i.test(e.description)
+      ? "internet"
+      : /agua|água/i.test(e.description)
+        ? "água"
+        : "energia";
+    const [y, m] = e.reference_date.slice(0, 7).split("-").map(Number);
+    const month = monthLabelLong(new Date(y, (m ?? 1) - 1, 1)).toLowerCase();
+    const due = e.notes?.match(/\[\[due:(\d{4}-\d{2}-\d{2})\]\]/)?.[1] ?? null;
+    const dueLine = due ? `\nVencimento: ${formatDateBR(due)}` : "";
+    return `Segue a fatura de ${label} da usina referente a ${month}.\nValor: ${brl(Number(e.amount))}${dueLine}\nBoleto em anexo para pagamento.`;
+  }
+
+  /** Coloca o boleto da despesa na fila para o grupo (o irmão paga). */
+  async function queueExpenseWhatsApp(e: Expense) {
+    if (!e.attachment_path) return toast.error("Esta despesa não tem boleto anexado.");
+    const { error } = await supabase.from("expense_whatsapp_queue").insert({
+      expense_id: e.id,
+      message_text: buildExpenseWhatsAppMessage(e),
+      attachment_path: e.attachment_path,
+      status: "pending",
+    });
+    if (error) return toast.error(error.message);
+    toast.success("Boleto na fila para envio no grupo.");
+    qc.invalidateQueries({ queryKey: ["fluxo-page"] });
+  }
+
+  /** Volta um envio que falhou para a fila. */
+  async function retryExpenseWhatsApp(id: string) {
+    const { error } = await supabase
+      .from("expense_whatsapp_queue")
+      .update({ status: "pending", error: null, sent_at: null })
+      .eq("id", id);
+    if (error) return toast.error(error.message);
+    toast.success("Envio voltou para a fila");
+    qc.invalidateQueries({ queryKey: ["fluxo-page"] });
+  }
 
   const normalizedExpenseSearchName = normalizeSearch(expenseSearchName);
   const parsedExpenseSearchValue = Number(expenseSearchValue.replace(",", "."));
@@ -735,6 +812,34 @@ function Fluxo() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-red-500 num whitespace-nowrap">{brl(Number(e.amount))}</span>
+                {e.category === "Fatura Usina" && (
+                  <>
+                    {!e.attachment_path ? (
+                      <span title="Sem boleto anexado" className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Sem boleto</span>
+                    ) : expenseWaByExpense.get(e.id)?.status === "pending" ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Na fila</span>
+                    ) : expenseWaByExpense.get(e.id)?.status === "sent" ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Enviado no grupo</span>
+                    ) : expenseWaByExpense.get(e.id)?.status === "failed" ? (
+                      <button
+                        onClick={() => retryExpenseWhatsApp(expenseWaByExpense.get(e.id)!.id)}
+                        className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 hover:bg-red-200"
+                        title={expenseWaByExpense.get(e.id)?.error ?? "Falha no envio"}
+                      >
+                        Falhou — Reenviar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => queueExpenseWhatsApp(e)}
+                        title="Enviar o boleto no grupo do WhatsApp para pagamento"
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent"
+                      >
+                        <img src="/whatsapp-logo.svg" alt="" className="h-4 w-4" />
+                        Enviar no grupo
+                      </button>
+                    )}
+                  </>
+                )}
                 <button
                   aria-label="Editar"
                   onClick={() => setEdit(e)}
