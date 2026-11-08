@@ -3,9 +3,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
-import { brl, monthLabel, monthLabelLong, initial } from "@/lib/format";
+import { brl, monthLabel, monthLabelLong, monthLabelFromISO, initial } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown, DollarSign, Receipt, Users, Trophy, ArrowUpRight, ArrowDownRight, Briefcase } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Receipt, Users, Trophy, ArrowUpRight, ArrowDownRight, Briefcase, HandCoins } from "lucide-react";
 
 
 type Invoice = {
@@ -16,7 +16,7 @@ type Invoice = {
   distributor_invoice: number;
   value_without_plant: number;
 };
-type Expense = { id: string; reference_date: string; amount: number };
+type Expense = { id: string; reference_date: string; amount: number; description: string; notes: string | null };
 type Client = { id: string; name: string; color: string };
 
 const DashboardPerformanceChart = React.lazy(() =>
@@ -35,7 +35,7 @@ const dashboardQ = queryOptions({
   queryFn: async () => {
     const [inv, exp, cli] = await Promise.all([
       supabase.from("invoices").select("id,client_id,reference_date,client_pays,distributor_invoice,value_without_plant"),
-      supabase.from("expenses").select("id,reference_date,amount"),
+      supabase.from("expenses").select("id,reference_date,amount,description,notes"),
       supabase.from("clients").select("id,name,color").eq("active", true),
     ]);
     if (inv.error) throw inv.error;
@@ -159,6 +159,19 @@ function Dashboard() {
     .map(c => ({ ...c, profit: profitByClient.get(c.id) ?? 0 }))
     .sort((a, b) => b.profit - a.profit);
   const maxProfit = Math.max(0.1, ...ranking.map(r => r.profit));
+
+  // Reembolso das placas: adiantado em jul/2026 para placas de novos
+  // clientes. O restante é o total menos as despesas de reembolso
+  // lançadas manualmente todo mês (descrição com "reembolso").
+  const REEMBOLSO_PLACAS_TOTAL = 11368;
+  const reembolsos = data.expenses
+    .filter((e) => /reembolso/i.test(e.description ?? ""))
+    .sort((a, b) => a.reference_date.localeCompare(b.reference_date));
+  const reembolsado = reembolsos.reduce((a, e) => a + Number(e.amount), 0);
+  const reembolsoRestante = Math.max(0, REEMBOLSO_PLACAS_TOTAL - reembolsado);
+  const reembolsoPct = REEMBOLSO_PLACAS_TOTAL > 0
+    ? Math.min(100, (reembolsado / REEMBOLSO_PLACAS_TOTAL) * 100)
+    : 0;
 
   // monthly summary (last 6)
   const summary = [...chartData].reverse();
@@ -309,6 +322,46 @@ function Dashboard() {
               ))}
               {ranking.length === 0 && <p className="text-xs text-muted-foreground">Nenhum cliente cadastrado.</p>}
             </div>
+          </Card>
+
+          <Card className="glass-card rounded-2xl p-6">
+            <div className="mb-1 flex items-center gap-2">
+              <HandCoins className="h-4 w-4 text-primary" />
+              <h2 className="text-base font-bold text-foreground tracking-tight text-glow">Reembolso das placas</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">Adiantado em jul/2026 para placas de novos clientes.</p>
+            <div className="mt-4">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Restante a receber</div>
+              <div className="mt-1 text-2xl font-bold text-foreground num-lg">{brl(reembolsoRestante)}</div>
+            </div>
+            <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-accent/50">
+              <div
+                className="h-full rounded-full bg-[#2F6F62]"
+                style={{ width: `${reembolsoPct}%` }}
+              />
+            </div>
+            <div className="mt-4 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Total adiantado</span>
+                <span className="num font-semibold text-foreground">{brl(REEMBOLSO_PLACAS_TOTAL)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Já reembolsado</span>
+                <span className="num font-semibold text-foreground">{brl(reembolsado)}</span>
+              </div>
+            </div>
+            {reembolsos.length > 0 ? (
+              <div className="mt-4 space-y-2 border-t border-border/50 pt-3">
+                {reembolsos.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate text-muted-foreground">{monthLabelFromISO(e.reference_date)} — {e.description}</span>
+                    <span className="num shrink-0 font-semibold text-foreground">{brl(Number(e.amount))}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-4 text-xs text-muted-foreground">Nenhum reembolso lançado ainda.</p>
+            )}
           </Card>
 
           <Card className="glass-card rounded-2xl p-6">
