@@ -811,38 +811,38 @@ function Fluxo() {
                       Parcela {e.installment_no}/{e.installment_total}
                     </span>
                   ) : null}
+                  {e.category === "Fatura Usina" && (
+                    <>
+                      {!e.attachment_path ? (
+                        <span title="Sem boleto anexado" className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Sem boleto</span>
+                      ) : expenseWaByExpense.get(e.id)?.status === "pending" ? (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Na fila</span>
+                      ) : expenseWaByExpense.get(e.id)?.status === "sent" ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Enviado no grupo</span>
+                      ) : expenseWaByExpense.get(e.id)?.status === "failed" ? (
+                        <button
+                          onClick={() => retryExpenseWhatsApp(expenseWaByExpense.get(e.id)!.id)}
+                          className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 hover:bg-red-200"
+                          title={expenseWaByExpense.get(e.id)?.error ?? "Falha no envio"}
+                        >
+                          Falhou — Reenviar
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => queueExpenseWhatsApp(e)}
+                          title="Enviar o boleto no grupo do WhatsApp para pagamento"
+                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent"
+                        >
+                          <img src="/whatsapp-logo.svg" alt="" className="h-3 w-3" />
+                          Enviar no grupo
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-red-500 num whitespace-nowrap">{brl(Number(e.amount))}</span>
-                {e.category === "Fatura Usina" && (
-                  <>
-                    {!e.attachment_path ? (
-                      <span title="Sem boleto anexado" className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-muted-foreground">Sem boleto</span>
-                    ) : expenseWaByExpense.get(e.id)?.status === "pending" ? (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Na fila</span>
-                    ) : expenseWaByExpense.get(e.id)?.status === "sent" ? (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">Enviado no grupo</span>
-                    ) : expenseWaByExpense.get(e.id)?.status === "failed" ? (
-                      <button
-                        onClick={() => retryExpenseWhatsApp(expenseWaByExpense.get(e.id)!.id)}
-                        className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 hover:bg-red-200"
-                        title={expenseWaByExpense.get(e.id)?.error ?? "Falha no envio"}
-                      >
-                        Falhou — Reenviar
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => queueExpenseWhatsApp(e)}
-                        title="Enviar o boleto no grupo do WhatsApp para pagamento"
-                        className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent"
-                      >
-                        <img src="/whatsapp-logo.svg" alt="" className="h-4 w-4" />
-                        Enviar no grupo
-                      </button>
-                    )}
-                  </>
-                )}
                 <button
                   aria-label="Editar"
                   onClick={() => setEdit(e)}
