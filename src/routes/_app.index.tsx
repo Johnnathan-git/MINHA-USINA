@@ -72,7 +72,23 @@ function invoiceProfit(i: Invoice) {
   return Number(i.client_pays) - Number(i.distributor_invoice);
 }
 
-// Rendimento do empréstimo das placas (115% do CDI, cofrinho Mercado Pago).
+// Saque do rendimento: o usuário estima sacar só quando o empréstimo
+// estiver totalmente quitado, por volta de abr/2027. O IR é o da
+// tabela regressiva sobre o prazo total (01/07/2026 até o saque);
+// IOF não entra (só existe nos primeiros 30 dias).
+const WITHDRAWAL_DATE = "2027-04-25";
+function irRate(days: number): number {
+  if (days <= 180) return 0.225;
+  if (days <= 360) return 0.2;
+  if (days <= 720) return 0.175;
+  return 0.15;
+}
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const ms = new Date(by, bm - 1, bd).getTime() - new Date(ay, am - 1, ad).getTime();
+  return Math.round(ms / 86400000);
+}
 // O empréstimo foi de R$ 11.368,00 em 01/07/2026. O rendimento é
 // calculado dia a dia (dias úteis) sobre o saldo devedor: o total
 // menos os reembolsos já lançados, cada um abatido na sua data —
@@ -244,6 +260,8 @@ function Dashboard() {
     ? Math.min(100, (reembolsado / REEMBOLSO_PLACAS_TOTAL) * 100)
     : 0;
   const rendimento = loanYield(REEMBOLSO_PLACAS_TOTAL, reembolsos, now);
+  const irRendimento = irRate(daysBetween("2026-07-01", WITHDRAWAL_DATE));
+  const rendimentoLiquido = rendimento * (1 - irRendimento);
 
   // monthly summary (last 6)
   const summary = [...chartData].reverse();
@@ -408,11 +426,11 @@ function Dashboard() {
                 <div className="mt-1 text-2xl font-bold text-foreground num-lg">{brl(reembolsoRestante)}</div>
               </div>
               <div className="text-right">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Rendimento 115% CDI</div>
-                <div className="mt-1 text-2xl font-bold text-[#2F6F62] num-lg">{brl(rendimento)}</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Rendimento líquido 115% CDI</div>
+                <div className="mt-1 text-2xl font-bold text-[#2F6F62] num-lg">{brl(rendimentoLiquido)}</div>
               </div>
             </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Desde 01/07/2026, sobre o saldo devedor — cai conforme os repasses.</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Desde 01/07/2026, sobre o saldo devedor. Líquido de IR ({(irRendimento * 100).toFixed(0)}%), saque em abr/2027.</p>
             <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-accent/50">
               <div
                 className="h-full rounded-full bg-[#2F6F62]"
