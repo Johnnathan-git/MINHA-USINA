@@ -72,7 +72,7 @@ function invoiceProfit(i: Invoice) {
   return Number(i.client_pays) - Number(i.distributor_invoice);
 }
 
-// Rendimento do empréstimo das placas (115% do CDI, cofrinho PagBank).
+// Rendimento do empréstimo das placas (115% do CDI, cofrinho Mercado Pago).
 // O empréstimo foi de R$ 11.368,00 em 01/07/2026. O rendimento é
 // calculado dia a dia (dias úteis) sobre o saldo devedor: o total
 // menos os reembolsos já lançados, cada um abatido na sua data —
