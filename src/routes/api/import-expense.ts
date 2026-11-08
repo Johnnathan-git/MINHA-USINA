@@ -13,6 +13,25 @@ import { timingSafeEqual } from 'node:crypto'
  *
  * Dedupe: mesma categoria + descrição + reference_date não duplica.
  */
+
+/**
+ * Renomeação de 2026-11-07: as despesas da usina passaram a se chamar
+ * "Fatura Energia Usina", "Fatura Agua Usina" e "Boleto Internet Usina"
+ * (antes "Fatura de Energia Usina", "Fatura de Agua Usina" e
+ * "Fatura de Internet Usina"). A dedupe e o attach aceitam o nome antigo
+ * até a renomeação ser aplicada no banco, para não duplicar a despesa do mês.
+ */
+const OLD_DESCRIPTION: Record<string, string> = {
+  'Fatura Energia Usina': 'Fatura de Energia Usina',
+  'Fatura Agua Usina': 'Fatura de Agua Usina',
+  'Boleto Internet Usina': 'Fatura de Internet Usina',
+}
+
+function descriptionsFor(description: string): string[] {
+  const old = OLD_DESCRIPTION[description]
+  return old ? [description, old] : [description]
+}
+
 export const Route = createFileRoute('/api/import-expense')({
   server: {
     handlers: {
@@ -72,7 +91,7 @@ export const Route = createFileRoute('/api/import-expense')({
             .from('expenses')
             .select('id')
             .eq('category', category)
-            .eq('description', description)
+            .in('description', descriptionsFor(description))
             .gte('reference_date', monthStart)
             .lt('reference_date', monthEnd)
             .maybeSingle()
@@ -125,7 +144,7 @@ export const Route = createFileRoute('/api/import-expense')({
           .from('expenses')
           .select('id')
           .eq('category', category)
-          .eq('description', description)
+          .in('description', descriptionsFor(description))
           .gte('reference_date', monthStart)
           .lt('reference_date', monthEnd)
           .maybeSingle()

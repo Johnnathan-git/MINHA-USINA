@@ -208,11 +208,11 @@ HELPER_EXPENSE = os.path.join(HELPER_DIR, "import_expense.py")
 
 GENERATING_UC = "423837601225"  # UC geradora da usina
 PLANT_WATER_MATRICULA = "59289-7"  # matrícula Demae da usina (R. CH-06)
-WATER_DESCRIPTION = "Fatura de Agua Usina"
+WATER_DESCRIPTION = "Fatura Agua Usina"
 INTERNET_LAUNCH_DAY = 25  # a internet do mês M é lançada no dia 25 do mês M-1
 EXPENSE_CATEGORY = "Fatura Usina"
-ENERGY_DESCRIPTION = "Fatura de Energia Usina"
-INTERNET_DESCRIPTION = "Fatura de Internet Usina"
+ENERGY_DESCRIPTION = "Fatura Energia Usina"
+INTERNET_DESCRIPTION = "Boleto Internet Usina"
 INTERNET_AMOUNT = 79.00  # valor fixo todo mês, confirmado pelo usuário
 PENDING_NOTES = "[[status:pendente]]"
 

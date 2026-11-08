@@ -406,16 +406,19 @@ function Fluxo() {
 
   /** Mensagem que acompanha o boleto no grupo (o irmão paga a despesa). */
   function buildExpenseWhatsAppMessage(e: Expense): string {
-    const label = /internet/i.test(e.description)
+    const isInternet = /internet/i.test(e.description);
+    const label = isInternet
       ? "internet"
       : /agua|água/i.test(e.description)
         ? "água"
         : "energia";
+    const noun = isInternet ? "o boleto" : "a fatura";
+    const attachWord = isInternet ? "Boleto" : "Fatura";
     const [y, m] = e.reference_date.slice(0, 7).split("-").map(Number);
     const month = monthLabelLong(new Date(y, (m ?? 1) - 1, 1)).toLowerCase();
     const due = e.notes?.match(/\[\[due:(\d{4}-\d{2}-\d{2})\]\]/)?.[1] ?? null;
     const dueLine = due ? `\nVencimento: ${formatDateBR(due)}` : "";
-    return `Segue a fatura de ${label} da usina referente a ${month}.\nValor: ${brl(Number(e.amount))}${dueLine}\nBoleto em anexo para pagamento.`;
+    return `Segue ${noun} de ${label} da usina referente a ${month}.\nValor: ${brl(Number(e.amount))}${dueLine}\n${attachWord} em anexo para pagamento.`;
   }
 
   /** Coloca o boleto da despesa na fila para o grupo (o irmão paga). */

@@ -27,13 +27,13 @@ Secrets, e é enviado no header `x-import-secret` de cada chamada.
   lançamento abre já preenchido. Faturas já lançadas ou já pendentes são
   ignoradas.
 - **Energia da usina:** a fatura da UC geradora (423837601225) vira a
-  despesa "Fatura de Energia Usina" (categoria Fatura Usina, pendente),
+  despesa "Fatura Energia Usina" (categoria Fatura Usina, pendente),
   com o valor total da fatura. O PDF da fatura é anexado à despesa e o
   vencimento vai em notes ([[due:...]]), para o envio no grupo.
 - **Água (Demae):** só a matrícula 59289-7 é da usina e vira a despesa
-  "Fatura de Agua Usina". Outras matrículas no nome do usuário (outros
+  "Fatura Agua Usina". Outras matrículas no nome do usuário (outros
   imóveis) são ignoradas. O PDF e o vencimento também são anexados.
-- **Internet:** despesa fixa "Fatura de Internet Usina" de R$ 79,00. A do
+- **Internet:** despesa fixa "Boleto Internet Usina" de R$ 79,00. A do
   mês M é lançada no dia 25 do mês M-1; a rotina também garante a do mês
   corrente. Se existir o boleto em `boletos-internet/AAAA-MM.pdf` (pasta
   local, não vai para o repositório — contém dados pessoais), ele é
