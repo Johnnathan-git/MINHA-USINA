@@ -72,6 +72,73 @@ function invoiceProfit(i: Invoice) {
   return Number(i.client_pays) - Number(i.distributor_invoice);
 }
 
+// Rendimento do empréstimo das placas (115% do CDI, cofrinho PagBank).
+// O empréstimo foi de R$ 11.368,00 em 01/07/2026. O rendimento é
+// calculado dia a dia (dias úteis) sobre o saldo devedor: o total
+// menos os reembolsos já lançados, cada um abatido na sua data —
+// por isso ele cai conforme os repasses. CDI mensal real (Banco
+// Central, SGS 4391) nos meses fechados; no mês corrente e nos
+// futuros, usa o CDI anual atual.
+const CDI_ANNUAL = 0.1365; // 13,65% a.a. (nov/2026)
+const MONTHLY_CDI: Record<string, number> = {
+  "2026-07": 0.0122,
+  "2026-08": 0.0109,
+  "2026-09": 0.0108,
+  "2026-10": 0.0107,
+};
+const HOLIDAYS = new Set([
+  "2026-09-07", "2026-10-12", "2026-11-02", "2026-11-15", "2026-11-20",
+  "2026-12-25", "2027-01-01", "2027-02-15", "2027-02-16", "2027-04-02",
+  "2027-04-21", "2027-05-01", "2027-06-03", "2027-09-07", "2027-10-12",
+  "2027-11-02", "2027-11-15", "2027-12-25",
+]);
+
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function businessDaysInMonth(year: number, month: number): number {
+  let n = 0;
+  const d = new Date(year, month, 1);
+  while (d.getMonth() === month) {
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !HOLIDAYS.has(isoDate(d))) n++;
+    d.setDate(d.getDate() + 1);
+  }
+  return n;
+}
+
+function loanYield(total: number, reembolsos: Expense[], today: Date): number {
+  const start = new Date(2026, 6, 1); // 01/07/2026
+  const dailyRateCache = new Map<string, number>();
+  const dailyRate = (d: Date): number => {
+    const key = isoDate(d).slice(0, 7);
+    const cached = dailyRateCache.get(key);
+    if (cached != null) return cached;
+    const monthly = MONTHLY_CDI[key];
+    const rate = monthly != null
+      ? (1 + monthly) ** (1.15 / businessDaysInMonth(d.getFullYear(), d.getMonth())) - 1
+      : (1 + 1.15 * CDI_ANNUAL) ** (1 / 252) - 1;
+    dailyRateCache.set(key, rate);
+    return rate;
+  };
+  let balance = total;
+  let yield_ = 0;
+  let idx = 0;
+  const d = new Date(start);
+  while (d <= today) {
+    while (idx < reembolsos.length && reembolsos[idx].reference_date <= isoDate(d)) {
+      balance -= Number(reembolsos[idx].amount);
+      idx++;
+    }
+    balance = Math.max(0, balance);
+    if (d.getDay() !== 0 && d.getDay() !== 6 && !HOLIDAYS.has(isoDate(d))) {
+      yield_ += balance * dailyRate(d);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return yield_;
+}
+
 function Dashboard() {
   const { data } = useSuspenseQuery(dashboardQ);
   const now = new Date();
@@ -176,6 +243,7 @@ function Dashboard() {
   const reembolsoPct = REEMBOLSO_PLACAS_TOTAL > 0
     ? Math.min(100, (reembolsado / REEMBOLSO_PLACAS_TOTAL) * 100)
     : 0;
+  const rendimento = loanYield(REEMBOLSO_PLACAS_TOTAL, reembolsos, now);
 
   // monthly summary (last 6)
   const summary = [...chartData].reverse();
@@ -334,10 +402,17 @@ function Dashboard() {
               <h2 className="text-base font-bold text-foreground tracking-tight text-glow">Reembolso das placas</h2>
             </div>
             <p className="text-xs text-muted-foreground">Adiantado em jul/2026 para placas de novos clientes.</p>
-            <div className="mt-4">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Restante a receber</div>
-              <div className="mt-1 text-2xl font-bold text-foreground num-lg">{brl(reembolsoRestante)}</div>
+            <div className="mt-4 flex items-end justify-between gap-4">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Restante a receber</div>
+                <div className="mt-1 text-2xl font-bold text-foreground num-lg">{brl(reembolsoRestante)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Rendimento 115% CDI</div>
+                <div className="mt-1 text-2xl font-bold text-[#2F6F62] num-lg">{brl(rendimento)}</div>
+              </div>
             </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Desde 01/07/2026, sobre o saldo devedor — cai conforme os repasses.</p>
             <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-accent/50">
               <div
                 className="h-full rounded-full bg-[#2F6F62]"
