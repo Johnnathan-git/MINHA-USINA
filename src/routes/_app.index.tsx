@@ -16,7 +16,7 @@ type Invoice = {
   distributor_invoice: number;
   value_without_plant: number;
 };
-type Expense = { id: string; reference_date: string; amount: number; description: string; notes: string | null };
+type Expense = { id: string; reference_date: string; amount: number; description: string; category: string; notes: string | null };
 type Client = { id: string; name: string; color: string };
 
 const DashboardPerformanceChart = React.lazy(() =>
@@ -35,7 +35,7 @@ const dashboardQ = queryOptions({
   queryFn: async () => {
     const [inv, exp, cli] = await Promise.all([
       supabase.from("invoices").select("id,client_id,reference_date,client_pays,distributor_invoice,value_without_plant"),
-      supabase.from("expenses").select("id,reference_date,amount,description,notes"),
+      supabase.from("expenses").select("id,reference_date,amount,description,category,notes"),
       supabase.from("clients").select("id,name,color").eq("active", true),
     ]);
     if (inv.error) throw inv.error;
@@ -162,10 +162,14 @@ function Dashboard() {
 
   // Reembolso das placas: adiantado em jul/2026 para placas de novos
   // clientes. O restante é o total menos as despesas de reembolso
-  // lançadas manualmente todo mês (descrição com "reembolso").
+  // lançadas manualmente todo mês. O reembolso é a despesa de
+  // categoria "REEMBOLSO JOHN" (descrição "Pagamento John") — não
+  // basta procurar "reembolso" na descrição: a descrição não tem
+  // essa palavra, e a linha de sistema "__CATEGORIA_DESPESA__:"
+  // (categoria __SISTEMA__, valor R$ 0) cairia na conta.
   const REEMBOLSO_PLACAS_TOTAL = 11368;
   const reembolsos = data.expenses
-    .filter((e) => /reembolso/i.test(e.description ?? ""))
+    .filter((e) => e.category !== "__SISTEMA__" && /reembolso/i.test(`${e.category} ${e.description ?? ""}`))
     .sort((a, b) => a.reference_date.localeCompare(b.reference_date));
   const reembolsado = reembolsos.reduce((a, e) => a + Number(e.amount), 0);
   const reembolsoRestante = Math.max(0, REEMBOLSO_PLACAS_TOTAL - reembolsado);
