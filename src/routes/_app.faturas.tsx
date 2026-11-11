@@ -1254,11 +1254,30 @@ function InvoiceDialog({
       notes: withPaymentTag(f.notes, f.payment_status, f.due_date, f.price_kw),
       attachment_url: f.attachment_url || null,
     };
+    // Atualização otimista: a lista mostra o novo status na hora, sem esperar o banco.
+    if (invoice) {
+      qc.setQueryData(["faturas-page"], (old: any) =>
+        old
+          ? {
+              ...old,
+              invoices: old.invoices.map((row: any) =>
+                row.id === invoice.id
+                  ? { ...row, reference_date: payload.reference_date, attachment_url: payload.attachment_url, notes: payload.notes }
+                  : row,
+              ),
+            }
+          : old,
+      );
+    }
     const { error } = invoice
       ? await supabase.from("invoices").update(payload).eq("id", invoice.id)
       : await supabase.from("invoices").insert(payload);
     setSaving(false);
-    if (error) return toast.error(error.message);
+    if (error) {
+      // Desfaz a atualização otimista recarregando os dados verdadeiros.
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+      return toast.error(error.message);
+    }
     if (!invoice && pending) {
       const { error: pendingError } = await supabase
         .from("pending_invoice_imports")

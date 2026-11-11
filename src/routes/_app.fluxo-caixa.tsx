@@ -561,14 +561,26 @@ function Fluxo() {
       return;
     }
 
+    const newNotes = withInvoicePaymentStatus(invoiceEdit.notes, status);
+    // Atualização otimista: o status muda na tela na hora, sem esperar o banco.
+    const patchInvoiceNotes = (old: any) =>
+      old
+        ? { ...old, invoices: old.invoices.map((inv: any) => (inv.id === invoiceEdit.id ? { ...inv, notes: newNotes } : inv)) }
+        : old;
+    qc.setQueryData(["fluxo-page"], patchInvoiceNotes);
+    qc.setQueryData(["faturas-page"], patchInvoiceNotes);
+
     setInvoiceStatusSaving(true);
     const { error } = await supabase
       .from("invoices")
-      .update({ notes: withInvoicePaymentStatus(invoiceEdit.notes, status) })
+      .update({ notes: newNotes })
       .eq("id", invoiceEdit.id);
     setInvoiceStatusSaving(false);
 
     if (error) {
+      // Desfaz a atualização otimista recarregando os dados verdadeiros.
+      qc.invalidateQueries({ queryKey: ["fluxo-page"] });
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
       toast.error(error.message);
       return;
     }
@@ -1301,6 +1313,21 @@ function ExpenseDialog({
       amount: Number(f.amount),
       notes: withExpensePaymentTag(f.notes, f.payment_status),
     };
+    // Atualização otimista: a lista mostra o novo status na hora, sem esperar o banco.
+    if (expense) {
+      qc.setQueryData(["fluxo-page"], (old: any) =>
+        old
+          ? {
+              ...old,
+              expenses: old.expenses.map((row: any) =>
+                row.id === expense.id
+                  ? { ...row, reference_date: payload.reference_date, category: payload.category, description: payload.description, amount: payload.amount, notes: payload.notes }
+                  : row,
+              ),
+            }
+          : old,
+      );
+    }
     let res;
     if (expense) {
       res = await supabase.from("expenses").update(payload).eq("id", expense.id);
@@ -1327,7 +1354,11 @@ function ExpenseDialog({
       res = await supabase.from("expenses").insert(payload);
     }
     setSaving(false);
-    if (res.error) return toast.error(res.error.message);
+    if (res.error) {
+      // Desfaz a atualização otimista recarregando os dados verdadeiros.
+      qc.invalidateQueries({ queryKey: ["fluxo-page"] });
+      return toast.error(res.error.message);
+    }
 
     const currentStatus = f.payment_status;
     let currentAmount = Number(f.amount);
