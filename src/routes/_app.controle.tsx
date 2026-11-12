@@ -212,14 +212,22 @@ function Controle() {
 
   // % de rateio é sempre a proporção do consumo médio: ao mudar um consumo
   // (ou ao entrar/sair um cliente), as % são sugeridas de novo sozinhas.
+  // Maior resto: cada % vai para baixo em centésimos e os centésimos que
+  // faltam para fechar 100% exatos vão para quem tem o maior resto
+  // fracionário — a soma dá sempre 100,00%.
   function withRecalculatedPercentages(list: RateioClient[]): RateioClient[] {
     const total = list.reduce((sum, client) => sum + Number(client.avg_consumption || 0), 0);
     if (total <= 0) return list;
-    return list.map((client) => ({
-      ...client,
-      allocation_pct:
-        Math.round(((Number(client.avg_consumption || 0) / total) * 100) * 100) / 100,
-    }));
+    const exact = list.map((client) => (Number(client.avg_consumption || 0) / total) * 100);
+    const hundredths = exact.map((pct) => Math.floor(pct * 100));
+    const remaining = 10000 - hundredths.reduce((sum, v) => sum + v, 0);
+    const order = exact
+      .map((pct, i) => ({ i, frac: pct * 100 - Math.floor(pct * 100) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < remaining && order.length > 0; k++) {
+      hundredths[order[k % order.length].i] += 1;
+    }
+    return list.map((client, i) => ({ ...client, allocation_pct: hundredths[i] / 100 }));
   }
 
   function updateClient(id: string, patch: Partial<RateioClient>) {
