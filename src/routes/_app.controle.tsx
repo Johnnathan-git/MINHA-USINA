@@ -11,7 +11,7 @@ import {
 import { Plus, Zap, TrendingUp, BarChart3, Pencil, X, Save, RefreshCw, Trash2, ShieldAlert } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CLIENT_COLORS } from "@/lib/format";
+import { CLIENT_COLORS, monthLabelFromISO } from "@/lib/format";
 
 type RateioClient = {
   id: string;
@@ -21,6 +21,12 @@ type RateioClient = {
   allocation_pct: number;
   avg_consumption: number;
 };
+
+// Últimos consumos lançados de um cliente (mais recente primeiro).
+type InvoiceHistoryItem = { month: string; consumption: number };
+type InvoiceHistory = Record<string, InvoiceHistoryItem[]>;
+
+const digits = (s: string) => (s || "").replace(/\D/g, "");
 
 type Config = { panels_count: number; kw_per_panel: number };
 
@@ -66,48 +72,92 @@ const q = queryOptions({
     if (cfgRes.error) throw cfgRes.error;
 
     const savedClients = parseRateioState(stateRes.data?.[0]?.notes);
+    const config = (cfgRes.data ?? { panels_count: 0, kw_per_panel: 0 }) as Config;
+    let clients: RateioClient[];
+
     if (savedClients) {
-      return {
-        clients: savedClients,
-        config: (cfgRes.data ?? { panels_count: 0, kw_per_panel: 0 }) as Config,
-      };
+      clients = savedClients;
+    } else {
+      // Migração inicial: copia o cenário atual apenas uma vez.
+      // Depois de salvo, o Controle ADM deixa de depender de clients/client_allocations.
+      const [clientsRes, allocRes] = await Promise.all([
+        supabase.from("clients").select("id,name,uc_number,color,active").eq("active", true),
+        supabase.from("client_allocations").select("client_id,allocation_pct,avg_consumption"),
+      ]);
+      if (clientsRes.error) throw clientsRes.error;
+      if (allocRes.error) throw allocRes.error;
+
+      const allocMap = new Map(
+        (allocRes.data ?? []).map((a: any) => [
+          a.client_id,
+          {
+            allocation_pct: Number(a.allocation_pct || 0),
+            avg_consumption: Number(a.avg_consumption || 0),
+          },
+        ]),
+      );
+
+      clients = (clientsRes.data ?? []).map((client: any, index: number) => {
+        const alloc = allocMap.get(client.id) ?? { allocation_pct: 0, avg_consumption: 0 };
+        return {
+          id: crypto.randomUUID(),
+          name: client.name,
+          uc_number: client.uc_number || "",
+          color: client.color || CLIENT_COLORS[index % CLIENT_COLORS.length],
+          allocation_pct: alloc.allocation_pct,
+          avg_consumption: alloc.avg_consumption,
+        };
+      });
     }
 
-    // Migração inicial: copia o cenário atual apenas uma vez.
-    // Depois de salvo, o Controle ADM deixa de depender de clients/client_allocations.
-    const [clientsRes, allocRes] = await Promise.all([
-      supabase.from("clients").select("id,name,uc_number,color,active").eq("active", true),
-      supabase.from("client_allocations").select("client_id,allocation_pct,avg_consumption"),
-    ]);
-    if (clientsRes.error) throw clientsRes.error;
-    if (allocRes.error) throw allocRes.error;
+    // Histórico: últimos 3 consumos lançados de cada cliente (casado pela UC),
+    // para escolher o consumo médio sem digitar na mão. Clientes sem UC ou
+    // sem fatura lançada (ex.: prospectos) ficam sem histórico e seguem
+    // com o consumo médio manual.
+    const history: InvoiceHistory = {};
+    const clientIdByUc = new Map<string, string>();
+    const allClientsRes = await supabase.from("clients").select("id,uc_number");
+    if (!allClientsRes.error) {
+      for (const row of allClientsRes.data ?? []) {
+        const d = digits(String((row as any).uc_number || ""));
+        if (d) clientIdByUc.set(d, String((row as any).id));
+      }
+    }
+    const wantedIds = [
+      ...new Set(
+        clients
+          .map((c) => clientIdByUc.get(digits(c.uc_number)))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (wantedIds.length > 0) {
+      const invRes = await supabase
+        .from("invoices")
+        .select("client_id,reference_date,consumption_kw")
+        .in("client_id", wantedIds)
+        .order("reference_date", { ascending: false });
+      if (!invRes.error) {
+        const byClient = new Map<string, InvoiceHistoryItem[]>();
+        for (const row of invRes.data ?? []) {
+          const consumption = Number((row as any).consumption_kw || 0);
+          if (consumption <= 0) continue;
+          const list = byClient.get(String((row as any).client_id)) ?? [];
+          if (list.length < 3) {
+            list.push({
+              month: monthLabelFromISO(String((row as any).reference_date)),
+              consumption,
+            });
+            byClient.set(String((row as any).client_id), list);
+          }
+        }
+        for (const [uc, clientId] of clientIdByUc) {
+          const list = byClient.get(clientId);
+          if (list && list.length > 0) history[uc] = list;
+        }
+      }
+    }
 
-    const allocMap = new Map(
-      (allocRes.data ?? []).map((a: any) => [
-        a.client_id,
-        {
-          allocation_pct: Number(a.allocation_pct || 0),
-          avg_consumption: Number(a.avg_consumption || 0),
-        },
-      ]),
-    );
-
-    const initialClients: RateioClient[] = (clientsRes.data ?? []).map((client: any, index: number) => {
-      const alloc = allocMap.get(client.id) ?? { allocation_pct: 0, avg_consumption: 0 };
-      return {
-        id: crypto.randomUUID(),
-        name: client.name,
-        uc_number: client.uc_number || "",
-        color: client.color || CLIENT_COLORS[index % CLIENT_COLORS.length],
-        allocation_pct: alloc.allocation_pct,
-        avg_consumption: alloc.avg_consumption,
-      };
-    });
-
-    return {
-      clients: initialClients,
-      config: (cfgRes.data ?? { panels_count: 0, kw_per_panel: 0 }) as Config,
-    };
+    return { clients, config, history };
   },
 });
 
@@ -146,6 +196,19 @@ function Controle() {
   const totalKw = Number(cfg.panels_count) * Number(cfg.kw_per_panel);
   const totalPct = clients.reduce((sum, client) => sum + Number(client.allocation_pct || 0), 0);
   const totalAvg = clients.reduce((sum, client) => sum + Number(client.avg_consumption || 0), 0);
+  const history = data.history ?? {};
+  const histFor = (client: RateioClient) => history[digits(client.uc_number)] ?? [];
+  const avgOf = (list: InvoiceHistoryItem[]) =>
+    list.length > 0
+      ? Math.round(list.reduce((sum, item) => sum + item.consumption, 0) / list.length)
+      : 0;
+
+  // Planejamento de placas: quantas faltam (ou sobram) para a demanda atual.
+  const kwPerPanel = Number(cfg.kw_per_panel) || 0;
+  const panelsNeeded =
+    kwPerPanel > 0 && totalAvg > 0 ? Math.ceil(totalAvg / kwPerPanel) : 0;
+  const panelsToAdd = Math.max(0, panelsNeeded - Number(cfg.panels_count || 0));
+  const surplusKw = totalKw - totalAvg;
 
   function updateClient(id: string, patch: Partial<RateioClient>) {
     setClients((current) =>
@@ -304,6 +367,69 @@ function Controle() {
       </div>
 
       <Card className="glass-card p-6">
+        <h2 className="text-lg font-bold">Planejamento de placas</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Calculado com {kwPerPanel.toLocaleString("pt-BR")} kWh por placa/mês e{" "}
+          {Number(cfg.panels_count || 0)} placas atuais. Atualiza sozinho quando você
+          muda o consumo médio de um cliente.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Demanda total
+            </div>
+            <div className="text-2xl font-bold">
+              {totalAvg.toLocaleString("pt-BR")} kWh/mês
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Geração atual
+            </div>
+            <div className="text-2xl font-bold">
+              {totalKw.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kWh/mês
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Saldo
+            </div>
+            <div
+              className={`text-2xl font-bold ${surplusKw >= 0 ? "text-emerald-600" : "text-rose-600"}`}
+            >
+              {surplusKw >= 0 ? "+" : ""}
+              {surplusKw.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kWh/mês
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Placas necessárias
+            </div>
+            <div className="text-2xl font-bold">{kwPerPanel > 0 ? panelsNeeded : "—"}</div>
+          </div>
+        </div>
+        <div
+          className={`mt-4 rounded-xl border p-4 text-center ${
+            panelsToAdd > 0
+              ? "border-amber-300 bg-amber-50 text-amber-900"
+              : "border-emerald-300 bg-emerald-50 text-emerald-900"
+          }`}
+        >
+          {panelsToAdd > 0 ? (
+            <div className="text-lg font-bold">
+              Faltam {panelsToAdd} placa{panelsToAdd > 1 ? "s" : ""} para atender a
+              demanda
+            </div>
+          ) : (
+            <div className="text-lg font-bold">
+              Nenhuma placa a mais — sobra{" "}
+              {surplusKw.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} kWh/mês
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="glass-card p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold">Rateio por cliente</h2>
           <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
@@ -349,6 +475,59 @@ function Controle() {
                         <div className="text-xs text-muted-foreground">UC {client.uc_number || "—"}</div>
                       </>
                     )}
+                    {(() => {
+                      const hist = histFor(client);
+                      if (hist.length === 0) {
+                        return editing ? (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Sem faturas lançadas — informe o consumo médio manualmente.
+                          </div>
+                        ) : null;
+                      }
+                      const mean = avgOf(hist);
+                      return (
+                        <div className="mt-2">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Últimas faturas
+                          </div>
+                          {editing ? (
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {hist.map((h, i) => (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() =>
+                                    updateClient(client.id, { avg_consumption: h.consumption })
+                                  }
+                                  className="rounded-full border border-border px-2 py-1 text-xs font-bold hover:border-primary hover:text-primary"
+                                >
+                                  {h.month} · {h.consumption.toLocaleString("pt-BR")}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateClient(client.id, { avg_consumption: mean })
+                                }
+                                className="rounded-full bg-primary px-2 py-1 text-xs font-bold text-primary-foreground"
+                              >
+                                Média dos {hist.length}: {mean.toLocaleString("pt-BR")}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              {hist
+                                .map(
+                                  (h) =>
+                                    `${h.month} ${h.consumption.toLocaleString("pt-BR")}`,
+                                )
+                                .join(" · ")}{" "}
+                              (média {mean.toLocaleString("pt-BR")})
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
