@@ -320,9 +320,11 @@ function Controle() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="truncate text-4xl font-bold tracking-tight text-foreground">Controle ADM</h1>
-          <p className="text-sm font-medium text-muted-foreground">
-            Simulação independente de geração e rateio
-          </p>
+          <ol className="mt-2 space-y-1 text-sm font-medium text-muted-foreground">
+            <li>1º Altere a média de consumo de cada um.</li>
+            <li>2º Altere a qtd. de painéis e kW por painel.</li>
+            <li>3º Por último, recalcule o rateio.</li>
+          </ol>
         </div>
         <div className="flex flex-wrap gap-2">
           {!editing ? (
@@ -450,7 +452,7 @@ function Controle() {
       </Card>
 
       <Card className="glass-card p-6">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold">Rateio por cliente</h2>
           <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
             Total %:{" "}
@@ -459,11 +461,6 @@ function Controle() {
             </span>
           </div>
         </div>
-        <p className="mb-4 text-xs text-muted-foreground">
-          As % são sugeridas sozinhas a partir do consumo médio de cada um. Se
-          mudar uma média, entrar ou sair um cliente, tudo se ajusta na hora.
-          Você ainda pode ajustar uma % na mão se precisar.
-        </p>
 
         <div className="space-y-3">
           {clients.map((client) => {
