@@ -210,43 +210,55 @@ function Controle() {
   const panelsToAdd = Math.max(0, panelsNeeded - Number(cfg.panels_count || 0));
   const surplusKw = totalKw - totalAvg;
 
+  // % de rateio é sempre a proporção do consumo médio: ao mudar um consumo
+  // (ou ao entrar/sair um cliente), as % são sugeridas de novo sozinhas.
+  function withRecalculatedPercentages(list: RateioClient[]): RateioClient[] {
+    const total = list.reduce((sum, client) => sum + Number(client.avg_consumption || 0), 0);
+    if (total <= 0) return list;
+    return list.map((client) => ({
+      ...client,
+      allocation_pct:
+        Math.round(((Number(client.avg_consumption || 0) / total) * 100) * 100) / 100,
+    }));
+  }
+
   function updateClient(id: string, patch: Partial<RateioClient>) {
-    setClients((current) =>
-      current.map((client) => (client.id === id ? { ...client, ...patch } : client)),
-    );
+    setClients((current) => {
+      const next = current.map((client) =>
+        client.id === id ? { ...client, ...patch } : client,
+      );
+      // Só recalcula as % quando o consumo médio muda; ajuste manual de %
+      // (ou de nome/UC) não mexe nas demais.
+      return "avg_consumption" in patch ? withRecalculatedPercentages(next) : next;
+    });
   }
 
   function recalcRateio() {
     if (totalAvg <= 0) return toast.error("Informe consumos médios antes de recalcular");
-    setClients((current) =>
-      current.map((client) => {
-        const avg = Number(client.avg_consumption || 0);
-        const pct = (avg / totalAvg) * 100;
-        return {
-          ...client,
-          allocation_pct: Math.round(pct * 100) / 100,
-        };
-      }),
-    );
+    setClients((current) => withRecalculatedPercentages(current));
     toast.success("Rateio recalculado pelo consumo médio");
   }
 
-  function addClient(name: string, uc: string, avg: number, pct: number) {
-    setClients((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        name,
-        uc_number: uc,
-        color: CLIENT_COLORS[current.length % CLIENT_COLORS.length],
-        allocation_pct: pct,
-        avg_consumption: avg,
-      },
-    ]);
+  function addClient(name: string, uc: string, avg: number) {
+    setClients((current) =>
+      withRecalculatedPercentages([
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          name,
+          uc_number: uc,
+          color: CLIENT_COLORS[current.length % CLIENT_COLORS.length],
+          allocation_pct: 0,
+          avg_consumption: avg,
+        },
+      ]),
+    );
   }
 
   function deleteRow(id: string) {
-    setClients((current) => current.filter((client) => client.id !== id));
+    setClients((current) =>
+      withRecalculatedPercentages(current.filter((client) => client.id !== id)),
+    );
   }
 
   async function saveAll() {
@@ -430,7 +442,7 @@ function Controle() {
       </Card>
 
       <Card className="glass-card p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-lg font-bold">Rateio por cliente</h2>
           <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
             Total %:{" "}
@@ -439,6 +451,11 @@ function Controle() {
             </span>
           </div>
         </div>
+        <p className="mb-4 text-xs text-muted-foreground">
+          As % são sugeridas sozinhas a partir do consumo médio de cada um. Se
+          mudar uma média, entrar ou sair um cliente, tudo se ajusta na hora.
+          Você ainda pode ajustar uma % na mão se precisar.
+        </p>
 
         <div className="space-y-3">
           {clients.map((client) => {
@@ -596,16 +613,15 @@ function NewRateioClientDialog({
   onAdd,
 }: {
   onClose: () => void;
-  onAdd: (n: string, u: string, a: number, p: number) => void;
+  onAdd: (n: string, u: string, a: number) => void;
 }) {
   const [name, setName] = useState("");
   const [uc, setUc] = useState("");
   const [avg, setAvg] = useState("");
-  const [pct, setPct] = useState("0");
 
   function submit() {
     if (!name.trim()) return toast.error("Informe o nome");
-    onAdd(name.trim(), uc.trim(), Number(avg) || 0, Number(pct) || 0);
+    onAdd(name.trim(), uc.trim(), Number(avg) || 0);
     onClose();
   }
 
@@ -627,10 +643,9 @@ function NewRateioClientDialog({
           <div>
             <Label>Consumo médio</Label>
             <Input type="number" value={avg} onChange={(e) => setAvg(e.target.value)} />
-          </div>
-          <div>
-            <Label>% Rateio inicial</Label>
-            <Input type="number" step="0.01" value={pct} onChange={(e) => setPct(e.target.value)} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              A % de rateio é calculada sozinha a partir do consumo médio.
+            </p>
           </div>
         </div>
         <DialogFooter>
