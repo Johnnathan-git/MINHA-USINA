@@ -27,7 +27,19 @@ type Client = {
 };
 type InvoiceRow = { id: string; client_id: string; reference_date: string; attachment_url: string | null; notes: string | null };
 
-/** Fatura extraída do PDF do e-mail e aguardando importação. Não aparece como lista: só faz o avatar do cliente pulsar. */
+/** Fatura extraída do PDF do e-mail e aguardando importação. Não aparece como lista: só faz o avatar do cliente pulsar — verde quando completa, vermelho quando falta dado (ex.: preço do kW). */
+
+/** Pendência completa quando tem preço do kW: sem ele a fatura não pode ser lançada (o diálogo exige o preço). */
+function isPendingComplete(p: PendingImport): boolean {
+  return Number.isFinite(p.price_kw) && p.price_kw > 0;
+}
+
+/** O que falta numa pendência incompleta (ex.: preço do kW). */
+function missingPendingInfo(p: PendingImport): string[] {
+  const missing: string[] = [];
+  if (!Number.isFinite(p.price_kw) || p.price_kw <= 0) missing.push("preço do kW");
+  return missing;
+}
 type PendingImport = {
   id: string;
   client_id: string;
@@ -288,6 +300,7 @@ function FaturasPage() {
   const [newClientOpen, setNewClientOpen] = useState(false);
   const [editClient, setEditClient] = useState<Client | null>(null);
   const [invoiceFor, setInvoiceFor] = useState<Client | null>(null);
+  const [pendingChoice, setPendingChoice] = useState<{ client: Client; pending: PendingImport } | null>(null);
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
@@ -357,6 +370,16 @@ function FaturasPage() {
   const pendingByClient = new Map<string, PendingImport>();
   for (const p of data.pending) {
     if (!pendingByClient.has(p.client_id)) pendingByClient.set(p.client_id, p);
+  }
+
+  /** Abrir o lançamento: pendência incompleta pergunta antes se preenche manualmente ou aguarda os dados. */
+  function handleLaunchClick(c: Client) {
+    const pend = pendingByClient.get(c.id);
+    if (pend && !isPendingComplete(pend)) {
+      setPendingChoice({ client: c, pending: pend });
+    } else {
+      setInvoiceFor(c);
+    }
   }
 
   // Mensagens de WhatsApp do mês selecionado na seção de fechamento.
@@ -773,23 +796,31 @@ function FaturasPage() {
       )}
 
       <div className="grid grid-cols-1 gap-4 xs:grid-cols-2 lg:grid-cols-3 [&>*]:glass-card-interactive">
-        {shown.map((c) => (
-          <Card key={c.id} className="glass-card relative overflow-hidden p-5" style={{ borderLeft: `4px solid ${c.color}` }}>
+        {shown.map((c) => {
+          const pend = pendingByClient.get(c.id);
+          const pendComplete = pend ? isPendingComplete(pend) : false;
+          return (
+            <Card key={c.id} className="glass-card relative overflow-hidden p-5" style={{ borderLeft: `4px solid ${c.color}` }}>
             <div className="mb-3 flex w-full items-start justify-between text-left">
               <div className="flex items-center gap-2.5">
-                <div
-                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white shadow-sm ${
-                    pendingByClient.has(c.id) ? "animate-pulse ring-2 ring-amber-400" : ""
+                <button
+                  type="button"
+                  onClick={() => handleLaunchClick(c)}
+                  className={`flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-sm font-bold text-white shadow-sm ${
+                    pend ? `animate-pulse ring-2 ${pendComplete ? "ring-emerald-400" : "ring-red-500"}` : ""
                   }`}
                   style={{ backgroundColor: c.color }}
                   title={
-                    pendingByClient.has(c.id)
-                      ? `Fatura de ${monthLabelFromISO(pendingByClient.get(c.id)!.reference_date)} aguardando importação — clique em Lançar`
+                    pend
+                      ? pendComplete
+                        ? `Fatura de ${monthLabelFromISO(pend.reference_date)} pronta para importar — clique em Lançar`
+                        : `Fatura de ${monthLabelFromISO(pend.reference_date)} aguardando dados (falta o preço do kW) — clique para escolher`
                       : undefined
                   }
+                  aria-label={pend ? `Fatura de ${c.name} aguardando importação` : c.name}
                 >
                   {initial(c.name)}
-                </div>
+                </button>
                 <div className="min-w-0">
                   <div className="truncate font-bold text-sm text-foreground">{c.name}</div>
                   <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
@@ -847,7 +878,7 @@ function FaturasPage() {
                 size="sm"
                 className="w-full gap-2 transition-all hover:opacity-90 text-white font-bold rounded-lg px-3 py-1.5 border-0 text-[11px] uppercase tracking-wider"
                 style={getClientButtonStyles(c.color)}
-                onClick={() => setInvoiceFor(c)}
+                onClick={() => handleLaunchClick(c)}
                 disabled={!c.active}
               >
                 <Plus className="h-3 w-3 text-white" />
@@ -871,8 +902,9 @@ function FaturasPage() {
                 <ShieldAlert className="h-4 w-4" /> Excluir definitivo
               </Button>
             )}
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
 
       {(newClientOpen || editClient) && (
@@ -898,6 +930,43 @@ function FaturasPage() {
           pending={pendingByClient.get(historyFor.id) ?? null}
           onClose={() => setHistoryFor(null)}
         />
+      )}
+      {pendingChoice && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingChoice(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Falta informação na fatura</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              A fatura de {monthLabelFromISO(pendingChoice.pending.reference_date)} de{" "}
+              {pendingChoice.client.name} chegou sem{" "}
+              {missingPendingInfo(pendingChoice.pending).join(", ")}.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Se aguardar, o ícone continua pulsando em vermelho até os dados chegarem — quando a
+              fatura ficar completa, ele fica verde. Se preencher manualmente, o lançamento abre
+              agora para você digitar o que falta.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPendingChoice(null)}>
+                Aguardar dados
+              </Button>
+              <Button
+                onClick={() => {
+                  setInvoiceFor(pendingChoice.client);
+                  setPendingChoice(null);
+                }}
+              >
+                Preencher manualmente
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
