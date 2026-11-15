@@ -255,10 +255,11 @@ const fluxoQ = queryOptions({
     if (c.error) throw c.error;
     // attachment_path só existe após aplicar a migration; sem ela, a página
     // segue sem o botão de envio (mesmo cuidado da página Faturas).
-    let e = await supabase
+    const primaryExpenses = await supabase
       .from("expenses")
       .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total,attachment_path")
       .order("reference_date", { ascending: false });
+    let e: { data: (Omit<Expense, "attachment_path"> & { attachment_path?: string | null })[] | null; error: { message: string } | null } = primaryExpenses;
     if (e.error) {
       e = await supabase
         .from("expenses")

@@ -567,6 +567,7 @@ function FaturasPage() {
 
   /** Fatura da Equatorial a partir do PDF: cliente vira pendência; UC geradora vira despesa de energia. */
   async function integrateEquatorialBill(parsed: EquatorialParsed, file: File) {
+    if (!data) return;
     const referenceDate = `${parsed.referenceMonth}-01`;
     if (parsed.uc_number === GENERATING_UC) {
       await integrateExpense({
@@ -620,8 +621,8 @@ function FaturasPage() {
           (inv) => inv.reference_date.slice(0, 7) === parsed.referenceMonth && /\[\[price_kw_exact:([^\]]+)\]\]/.test(inv.notes ?? ""),
         );
         if (monthInvoice) {
-          exactStr = monthInvoice.notes!.match(/\[\[price_kw_exact:([^\]]+)\]\]/)![1].trim();
-          priceKw = parseNumBR(exactStr);
+          exactStr = monthInvoice.notes?.match(/\[\[price_kw_exact:([^\]]+)\]\]/)?.[1]?.trim() ?? null;
+          priceKw = parseNumBR(exactStr ?? "0");
         }
       }
     }
@@ -1012,7 +1013,7 @@ function FaturasPage() {
                       {w.table_data ? <WaTablePreview clientName={w.client_name} tableData={w.table_data} /> : null}
                       <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{w.message_text}</p>
                       {w.attachment_path ? (
-                        <Button variant="outline" size="sm" onClick={() => openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path)} className="gap-1">
+                        <Button variant="outline" size="sm" onClick={() => { if (w.attachment_path) void openWaPdf(`Fatura — ${w.client_name}`, w.attachment_path); }} className="gap-1">
                           <Paperclip className="h-3.5 w-3.5" />
                           Ver fatura (PDF)
                         </Button>

@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { timingSafeEqual } from 'node:crypto'
+import type { Database } from '@/integrations/supabase/types'
 
 /**
  * Recebe uma despesa da usina (energia, água ou internet) e grava direto
@@ -163,7 +164,7 @@ export const Route = createFileRoute('/api/import-expense')({
             : `${notesBase} [[due:${dueDate}]]`
           : notesBase
 
-        const insertRow: Record<string, unknown> = {
+        const insertRow: Database['public']['Tables']['expenses']['Insert'] = {
           category,
           description,
           amount,
