@@ -56,6 +56,10 @@ export const Route = createFileRoute("/_app/")({
     meta: [
       { title: "Dashboard — Usina dos Irmãos" },
       { name: "description", content: "Visão geral de receitas, despesas e lucro da Usina dos Irmãos." },
+      { property: "og:title", content: "Dashboard — Usina dos Irmãos" },
+      { property: "og:description", content: "Visão geral de receitas, despesas e lucro da Usina dos Irmãos." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

@@ -52,6 +52,10 @@ export const Route = createFileRoute("/_app/inventario")({
     meta: [
       { title: "Inventário — Usina dos Irmãos" },
       { name: "description", content: "Patrimônio, equipamentos e gastos de instalação." },
+      { property: "og:title", content: "Inventário — Usina dos Irmãos" },
+      { property: "og:description", content: "Patrimônio, equipamentos e gastos de instalação." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

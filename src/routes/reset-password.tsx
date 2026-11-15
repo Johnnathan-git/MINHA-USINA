@@ -13,6 +13,10 @@ export const Route = createFileRoute("/reset-password")({
     meta: [
       { title: "Redefinir senha — Usina dos Irmãos" },
       { name: "description", content: "Defina uma nova senha para acessar o sistema." },
+      { property: "og:title", content: "Redefinir senha — Usina dos Irmãos" },
+      { property: "og:description", content: "Defina uma nova senha para acessar o sistema." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

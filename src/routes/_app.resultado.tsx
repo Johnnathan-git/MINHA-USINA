@@ -9,6 +9,10 @@ export const Route = createFileRoute("/_app/resultado")({
     meta: [
       { title: "Economia Gerada — Usina dos Irmãos" },
       { name: "description", content: "Economia gerada por cliente e período." },
+      { property: "og:title", content: "Economia Gerada — Usina dos Irmãos" },
+      { property: "og:description", content: "Economia gerada por cliente e período." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

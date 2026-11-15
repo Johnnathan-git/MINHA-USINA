@@ -319,6 +319,10 @@ export const Route = createFileRoute("/_app/faturas")({
     meta: [
       { title: "Faturas — Usina dos Irmãos" },
       { name: "description", content: "Gestão de clientes e lançamento de faturas mensais." },
+      { property: "og:title", content: "Faturas — Usina dos Irmãos" },
+      { property: "og:description", content: "Gestão de clientes e lançamento de faturas mensais." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });
@@ -969,7 +973,7 @@ function FaturasPage() {
 
       {/* Histórico de envios do mês — abre por botão para a tela não encher. Toque em um cliente para conferir o que foi enviado. */}
       <Dialog open={waHistoryOpen} onOpenChange={(o) => { setWaHistoryOpen(o); if (!o) setWaExpanded(null); }}>
-        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Histórico de envios — {monthLabelFromISO(`${waMonth}-01`)}</DialogTitle>
           </DialogHeader>
@@ -1037,7 +1041,7 @@ function FaturasPage() {
 
       {/* Visualizador do PDF da fatura — dentro do app, sem abrir nova aba. */}
       <Dialog open={waPdf !== null} onOpenChange={(o) => { if (!o) closeWaPdf(); }}>
-        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{waPdf?.title ?? "Fatura"}</DialogTitle>
           </DialogHeader>
@@ -1060,7 +1064,7 @@ function FaturasPage() {
 
       {/* Editar a mensagem de fechamento — o modelo fica em plant_config e vale para a prévia e para o envio automático. */}
       <Dialog open={waTemplateOpen} onOpenChange={setWaTemplateOpen}>
-        <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Mensagem de fechamento</DialogTitle>
           </DialogHeader>
@@ -1284,7 +1288,7 @@ function FaturasPage() {
             if (!open) setPendingChoice(null);
           }}
         >
-          <DialogContent>
+          <DialogContent aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Falta informação na fatura</DialogTitle>
             </DialogHeader>
@@ -1321,7 +1325,7 @@ function FaturasPage() {
             if (!open && !bulkRunning) setBulkOpen(false);
           }}
         >
-          <DialogContent>
+          <DialogContent aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Lançar todas as faturas completas</DialogTitle>
             </DialogHeader>
@@ -1439,7 +1443,7 @@ function ClientDialog({ client, open, onClose }: { client: Client | null; open: 
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-foreground dark:text-glow">
             {client ? "Editar Cliente" : "Novo Cliente"}
@@ -1806,7 +1810,7 @@ function InvoiceDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{invoice ? "Editar Fatura" : "Lançar Fatura"} — {client.name}</DialogTitle>
         </DialogHeader>
@@ -2001,7 +2005,7 @@ function HistoryDialog({
   return (
     <>
       <Dialog open={!launching && !editing} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent aria-describedby={undefined} className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Histórico — {client.name}</DialogTitle>
           </DialogHeader>

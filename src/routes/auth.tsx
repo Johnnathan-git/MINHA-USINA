@@ -16,6 +16,10 @@ export const Route = createFileRoute("/auth")({
     meta: [
       { title: "Entrar — Usina dos Irmãos" },
       { name: "description", content: "Acesso ao sistema de gestão da Usina dos Irmãos." },
+      { property: "og:title", content: "Entrar — Usina dos Irmãos" },
+      { property: "og:description", content: "Acesso ao sistema de gestão da Usina dos Irmãos." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

@@ -168,6 +168,10 @@ export const Route = createFileRoute("/_app/controle")({
     meta: [
       { title: "Controle ADM — Usina dos Irmãos" },
       { name: "description", content: "Geração x consumo e rateio por cliente." },
+      { property: "og:title", content: "Controle ADM — Usina dos Irmãos" },
+      { property: "og:description", content: "Geração x consumo e rateio por cliente." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });
