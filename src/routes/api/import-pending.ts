@@ -112,6 +112,63 @@ export const Route = createFileRoute('/api/import-pending')({
           }
         }
 
+        // Preço kW do mês (o preço é padrão mensal: qualquer fatura do mês
+        // serve de referência). A fatura que chega pode vir sem preço quando
+        // o cliente foi 100% compensado (sem consumo não compensado).
+        // - Sem preço: busca o preço de outra pendência ou fatura lançada
+        //   do mesmo mês e usa ele.
+        // - Com preço: preenche as outras pendências do mesmo mês que
+        //   estão sem preço.
+        const refMonth = referenceDate.slice(0, 7)
+        const [refYear, refMon] = refMonth.split('-').map(Number)
+        const nextMonth =
+          refMon === 12
+            ? `${refYear + 1}-01`
+            : `${refYear}-${String(refMon + 1).padStart(2, '0')}`
+        const monthStart = `${refMonth}-01`
+        const monthEnd = `${nextMonth}-01`
+        const cleanExact = (v: unknown) =>
+          typeof v === 'string' && v.trim() && v.trim() !== 'None' ? v.trim() : null
+        const exactFromBody = cleanExact(body?.price_kw_exact)
+        const hasPrice = Number.isFinite(price) && price > 0
+
+        let finalPrice = price
+        let finalExact = exactFromBody
+        if (!hasPrice) {
+          const { data: pricedPending } = await supabaseAdmin
+            .from('pending_invoice_imports')
+            .select('price_kw, price_kw_exact')
+            .eq('status', 'pending')
+            .gte('reference_date', monthStart)
+            .lt('reference_date', monthEnd)
+            .not('price_kw', 'is', null)
+            .gt('price_kw', 0)
+            .limit(1)
+            .maybeSingle()
+          if (pricedPending) {
+            finalPrice = Number(pricedPending.price_kw)
+            finalExact = cleanExact(pricedPending.price_kw_exact)
+          } else {
+            const { data: pricedLaunched } = await supabaseAdmin
+              .from('invoices')
+              .select('price_kw, notes')
+              .gte('reference_date', monthStart)
+              .lt('reference_date', monthEnd)
+              .not('price_kw', 'is', null)
+              .gt('price_kw', 0)
+              .order('reference_date', { ascending: true })
+              .limit(1)
+              .maybeSingle()
+            if (pricedLaunched) {
+              finalPrice = Number(pricedLaunched.price_kw)
+              const m = String(pricedLaunched.notes ?? '').match(
+                /\[\[price_kw_exact:([^\]]+)\]\]/,
+              )
+              finalExact = cleanExact(m?.[1])
+            }
+          }
+        }
+
         const { data: inserted, error: insertError } = await supabaseAdmin
           .from('pending_invoice_imports')
           .insert({
@@ -119,11 +176,8 @@ export const Route = createFileRoute('/api/import-pending')({
             uc_number: uc,
             reference_date: referenceDate,
             consumption_kw: consumption,
-            price_kw: price,
-            price_kw_exact:
-              typeof body?.price_kw_exact === 'string' && body.price_kw_exact.trim()
-                ? body.price_kw_exact.trim()
-                : null,
+            price_kw: finalPrice,
+            price_kw_exact: finalExact,
             public_lighting: lighting,
             interest_fine: fine,
             distributor_invoice: distributor,
@@ -138,6 +192,21 @@ export const Route = createFileRoute('/api/import-pending')({
         if (insertError) {
           return Response.json({ error: insertError.message }, { status: 500 })
         }
+
+        if (hasPrice) {
+          // A fatura que chegou traz o preço do mês: preenche as outras
+          // pendências do mesmo mês que estão sem preço (ex.: cliente 100%
+          // compensado, cuja fatura não tem consumo não compensado).
+          await supabaseAdmin
+            .from('pending_invoice_imports')
+            .update({ price_kw: price, price_kw_exact: exactFromBody })
+            .eq('status', 'pending')
+            .gte('reference_date', monthStart)
+            .lt('reference_date', monthEnd)
+            .neq('id', inserted.id)
+            .or('price_kw.is.null,price_kw.eq.0')
+        }
+
         return Response.json(
           { status: 'created', pending_id: inserted.id, attachment_url: attachmentUrl },
           { status: 201 },

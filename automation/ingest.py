@@ -191,7 +191,7 @@ def build_payload(parsed, message_id, pdf_bytes):
         "reference_date": f"{year}-{MONTHS[mon]}-01",
         "consumption_kw": parsed["consumption_kw"],
         "price_kw": parsed["price_kw"],
-        "price_kw_exact": str(parsed["price_kw"]),
+        "price_kw_exact": str(parsed["price_kw"]) if parsed["price_kw"] is not None else None,
         "public_lighting": parsed["public_lighting"],
         "interest_fine": parsed["interest_fine"],
         "distributor_invoice": parsed["distributor_invoice"],
