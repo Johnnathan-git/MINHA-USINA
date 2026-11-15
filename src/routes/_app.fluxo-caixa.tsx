@@ -308,6 +308,8 @@ function Fluxo() {
   const [edit, setEdit] = useState<Expense | null>(null);
   const [invoiceEdit, setInvoiceEdit] = useState<Invoice | null>(null);
   const [invoiceStatusSaving, setInvoiceStatusSaving] = useState(false);
+  const [queuingExpenseId, setQueuingExpenseId] = useState<string | null>(null);
+  const [expenseResendChoice, setExpenseResendChoice] = useState<{ expense: Expense; existing: ExpenseWhatsAppQueue } | null>(null);
   const [bank, setBank] = useState<BankState>(() => readBankState());
   const [bankOpen, setBankOpen] = useState(false);
   const [bankHistoryOpen, setBankHistoryOpen] = useState(false);
@@ -424,14 +426,44 @@ function Fluxo() {
   /** Coloca o boleto da despesa na fila para o grupo (o irmão paga). */
   async function queueExpenseWhatsApp(e: Expense) {
     if (!e.attachment_path) return toast.error("Esta despesa não tem boleto anexado.");
-    const { error } = await supabase.from("expense_whatsapp_queue").insert({
-      expense_id: e.id,
-      message_text: buildExpenseWhatsAppMessage(e),
-      attachment_path: e.attachment_path,
-      status: "pending",
-    });
+    const existing = expenseWaByExpense.get(e.id);
+    if (existing && (existing.status === "pending" || existing.status === "sent")) {
+      // Segundo clique / tela desatualizada: alerta em vez de duplicar o envio.
+      setExpenseResendChoice({ expense: e, existing });
+      return;
+    }
+    if (queuingExpenseId) return;
+    setQueuingExpenseId(e.id);
+    try {
+      const { error } = await supabase.from("expense_whatsapp_queue").insert({
+        expense_id: e.id,
+        message_text: buildExpenseWhatsAppMessage(e),
+        attachment_path: e.attachment_path,
+        status: "pending",
+      });
+      if (error) {
+        if (/duplicate key/i.test(error.message)) {
+          return toast.error("Essa despesa já está na fila ou já foi enviada ao grupo.");
+        }
+        return toast.error(error.message);
+      }
+      toast.success("Boleto na fila para envio no grupo.");
+      qc.invalidateQueries({ queryKey: ["fluxo-page"] });
+    } finally {
+      setQueuingExpenseId(null);
+    }
+  }
+
+  /** Envia de novo uma despesa já enviada: volta a linha da fila para pendente (o remetente envia outra vez). */
+  async function resendExpenseWhatsApp() {
+    if (!expenseResendChoice) return;
+    const { error } = await supabase
+      .from("expense_whatsapp_queue")
+      .update({ status: "pending", error: null, sent_at: null })
+      .eq("id", expenseResendChoice.existing.id);
     if (error) return toast.error(error.message);
-    toast.success("Boleto na fila para envio no grupo.");
+    toast.success("Despesa voltou para a fila para enviar de novo.");
+    setExpenseResendChoice(null);
     qc.invalidateQueries({ queryKey: ["fluxo-page"] });
   }
 
@@ -842,11 +874,12 @@ function Fluxo() {
                       ) : (
                         <button
                           onClick={() => queueExpenseWhatsApp(e)}
+                          disabled={queuingExpenseId === e.id}
                           title="Enviar o boleto no grupo do WhatsApp para pagamento"
-                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent"
+                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent disabled:opacity-50"
                         >
                           <img src="/whatsapp-logo.svg" alt="" className="h-3 w-3" />
-                          Enviar no grupo
+                          {queuingExpenseId === e.id ? "Enviando…" : "Enviar no grupo"}
                         </button>
                       )}
                     </>
@@ -1163,6 +1196,37 @@ function Fluxo() {
               <Button onClick={saveBankAdjustment} disabled={bankSaving}>
                 {bankSaving ? "Salvando..." : "Confirmar saldo"}
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {expenseResendChoice && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setExpenseResendChoice(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {expenseResendChoice.existing.status === "sent"
+                  ? "Despesa já enviada ao grupo"
+                  : "Despesa já está na fila"}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              {expenseResendChoice.existing.status === "sent"
+                ? `A despesa "${expenseResendChoice.expense.description}" (${brl(Number(expenseResendChoice.expense.amount))}) já foi enviada ao grupo. Quer enviar novamente?`
+                : `A despesa "${expenseResendChoice.expense.description}" (${brl(Number(expenseResendChoice.expense.amount))}) já está na fila para envio no grupo. Não é preciso enviar de novo.`}
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setExpenseResendChoice(null)}>
+                {expenseResendChoice.existing.status === "sent" ? "Cancelar" : "Entendi"}
+              </Button>
+              {expenseResendChoice.existing.status === "sent" && (
+                <Button onClick={resendExpenseWhatsApp}>Enviar novamente</Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
