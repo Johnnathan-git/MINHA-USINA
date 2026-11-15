@@ -16,6 +16,7 @@ import {
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
 import { buildWhatsAppMessage, DEFAULT_WHATSAPP_TEMPLATE, formatPriceKw, type TableData } from "@/lib/whatsapp";
+import { extractPdfText, parseInvoiceText, type DemaeParsed, type EquatorialParsed } from "@/lib/parseInvoicePdf";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -40,6 +41,44 @@ function missingPendingInfo(p: PendingImport): string[] {
   if (!Number.isFinite(p.price_kw) || p.price_kw <= 0) missing.push("preço do kW");
   return missing;
 }
+
+/** "1.146,179" / "1,146179" -> número. Igual ao parseNum do diálogo de lançamento. */
+function parseNumBR(value: string | number): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value).trim().replace(/\s/g, "");
+  if (!normalized) return 0;
+  const decimalValue = normalized.includes(",")
+    ? normalized.replace(/\./g, "").replace(",", ".")
+    : normalized;
+  const parsed = Number(decimalValue);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Preço exato limpo ("None"/vazio -> null). */
+function cleanExactPrice(pending: PendingImport): string | null {
+  const exact = (pending.price_kw_exact ?? "").trim();
+  if (exact && exact !== "None") return exact;
+  return null;
+}
+
+/** Valores do lançamento a partir da pendência — mesma fórmula do diálogo (desconto do cliente, regra pós-10/2026). */
+function launchValuesFromPending(client: Client, pending: PendingImport): { sUsina: number; cPaga: number } {
+  const c = pending.consumption_kw;
+  const p = parseNumBR(cleanExactPrice(pending) ?? String(pending.price_kw));
+  const l = pending.public_lighting;
+  const j = pending.interest_fine;
+  const discount = (client.discount_pct ?? 30) / 100;
+  const baseWithoutFine = c * p + l;
+  if (pending.reference_date.slice(0, 7) >= "2026-10") {
+    return { sUsina: baseWithoutFine, cPaga: baseWithoutFine * (1 - discount) + j };
+  }
+  const sUsina = baseWithoutFine + j;
+  return { sUsina, cPaga: sUsina * (1 - discount) };
+}
+
+/** UC da usina (geradora) e matrícula da água da usina. */
+const GENERATING_UC = "423837601225";
+const PLANT_MATRICULA = "59289-7";
 type PendingImport = {
   id: string;
   client_id: string;
@@ -301,6 +340,12 @@ function FaturasPage() {
   const [editClient, setEditClient] = useState<Client | null>(null);
   const [invoiceFor, setInvoiceFor] = useState<Client | null>(null);
   const [pendingChoice, setPendingChoice] = useState<{ client: Client; pending: PendingImport } | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState<"pago" | "pendente">("pendente");
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [uploadInvoiceResult, setUploadInvoiceResult] = useState<string | null>(null);
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
@@ -379,6 +424,267 @@ function FaturasPage() {
       setPendingChoice({ client: c, pending: pend });
     } else {
       setInvoiceFor(c);
+    }
+  }
+
+  const clientById = new Map(data.clients.map((c) => [c.id, c]));
+  const completePendings = data.pending.filter(isPendingComplete);
+  const incompletePendings = data.pending.filter((p) => !isPendingComplete(p));
+  /** Pendências prontas para o lançamento em lote: cliente ativo e mês ainda não lançado. */
+  const bulkTargets = completePendings.filter((p) => {
+    const c = clientById.get(p.client_id);
+    if (!c || !c.active) return false;
+    return !data.invoices.some((inv) => inv.client_id === p.client_id && inv.reference_date === p.reference_date);
+  });
+
+  /** Lança todas as faturas completas de uma vez, na mesma conta do lançamento individual. */
+  async function runBulkLaunch() {
+    if (bulkRunning || bulkTargets.length === 0) return;
+    setBulkRunning(true);
+    setBulkProgress({ done: 0, total: bulkTargets.length });
+    const failed: string[] = [];
+    let launched = 0;
+    for (const [index, p] of bulkTargets.entries()) {
+      const client = clientById.get(p.client_id)!;
+      const { sUsina, cPaga } = launchValuesFromPending(client, p);
+      const priceStr = cleanExactPrice(p) ?? String(p.price_kw);
+      const payload = {
+        client_id: client.id,
+        uc_number: client.uc_number,
+        reference_date: p.reference_date,
+        consumption_kw: p.consumption_kw,
+        price_kw: parseNumBR(priceStr),
+        public_lighting: p.public_lighting,
+        interest_fine: p.interest_fine,
+        value_without_plant: sUsina,
+        client_pays: cPaga,
+        distributor_invoice: p.distributor_invoice,
+        notes: withPaymentTag("", bulkStatus, p.due_date ?? "", priceStr),
+        attachment_url: p.attachment_url ?? null,
+      };
+      const { error } = await supabase.from("invoices").insert(payload);
+      if (error) {
+        failed.push(`${client.name} (${error.message})`);
+      } else {
+        const { error: pendingError } = await supabase
+          .from("pending_invoice_imports")
+          .update({ status: "imported" })
+          .eq("id", p.id);
+        if (pendingError) failed.push(`${client.name} (lançada, mas a pendência não foi marcada)`);
+        else launched++;
+      }
+      setBulkProgress({ done: index + 1, total: bulkTargets.length });
+    }
+    setBulkRunning(false);
+    setBulkProgress(null);
+    setBulkOpen(false);
+    qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    qc.invalidateQueries({ queryKey: ["relatorio-page"] });
+    if (failed.length === 0) toast.success(`${launched} fatura${launched === 1 ? "" : "s"} lançada${launched === 1 ? "" : "s"}.`);
+    else toast.error(`Lançadas ${launched} de ${bulkTargets.length}. Falhas: ${failed.join("; ")}`);
+  }
+
+  /** Sobe o PDF no bucket de faturas (mesmo caminho do diálogo de lançamento). */
+  async function uploadInvoiceFile(path: string, file: File): Promise<string | null> {
+    const { error } = await supabase.storage.from("faturas_v3_privado_v2").upload(path, file);
+    if (error) {
+      toast.error(`PDF não subiu: ${error.message}`);
+      return null;
+    }
+    return path;
+  }
+
+  /** Despesa da usina a partir de um PDF (energia da UC geradora ou água do Demae). */
+  async function integrateExpense(args: { description: string; amount: number; referenceDate: string; dueDate: string | null; file: File }) {
+    const month = args.referenceDate.slice(0, 7);
+    const monthStart = `${month}-01`;
+    const next = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1);
+    const monthEnd = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`;
+    const oldDescription =
+      args.description === "Fatura Energia Usina"
+        ? "Fatura de Energia Usina"
+        : args.description === "Fatura Agua Usina"
+          ? "Fatura de Agua Usina"
+          : null;
+    const descriptions = oldDescription ? [args.description, oldDescription] : [args.description];
+    const { data: existing } = await supabase
+      .from("expenses")
+      .select("id,attachment_path")
+      .eq("category", "Fatura Usina")
+      .in("description", descriptions)
+      .gte("reference_date", monthStart)
+      .lt("reference_date", monthEnd)
+      .maybeSingle();
+    const attachmentPath = await uploadInvoiceFile(`expenses/${Date.now()}.pdf`, args.file);
+    if (existing) {
+      if (!existing.attachment_path && attachmentPath) {
+        await supabase.from("expenses").update({ attachment_path: attachmentPath }).eq("id", existing.id);
+        const msg = `A despesa "${args.description}" de ${monthLabelFromISO(args.referenceDate)} já existia — anexei o PDF nela.`;
+        toast.success(msg);
+        setUploadInvoiceResult(msg);
+      } else {
+        const msg = `A despesa "${args.description}" de ${monthLabelFromISO(args.referenceDate)} já existe.`;
+        toast.error(msg);
+        setUploadInvoiceResult(msg);
+      }
+      return;
+    }
+    const notes = args.dueDate ? `[[status:pendente]] [[due:${args.dueDate}]]` : "[[status:pendente]]";
+    const { error } = await supabase.from("expenses").insert({
+      category: "Fatura Usina",
+      description: args.description,
+      amount: args.amount,
+      reference_date: args.referenceDate,
+      notes,
+      attachment_path: attachmentPath,
+    });
+    if (error) {
+      toast.error(error.message);
+      setUploadInvoiceResult(error.message);
+      return;
+    }
+    const msg = `Despesa "${args.description}" de ${monthLabelFromISO(args.referenceDate)} criada (${brl(args.amount)}) — aparece no Fluxo de Caixa como pendente.`;
+    toast.success(msg);
+    setUploadInvoiceResult(msg);
+  }
+
+  /** Conta de água do Demae a partir do PDF. */
+  async function integrateDemaeBill(parsed: DemaeParsed, file: File) {
+    if (parsed.matricula !== PLANT_MATRICULA) {
+      const msg = `Matrícula ${parsed.matricula} não é da usina (é de outro imóvel).`;
+      toast.error(msg);
+      setUploadInvoiceResult(msg);
+      return;
+    }
+    await integrateExpense({
+      description: "Fatura Agua Usina",
+      amount: parsed.total,
+      referenceDate: `${parsed.referenceMonth}-01`,
+      dueDate: parsed.due_date,
+      file,
+    });
+  }
+
+  /** Fatura da Equatorial a partir do PDF: cliente vira pendência; UC geradora vira despesa de energia. */
+  async function integrateEquatorialBill(parsed: EquatorialParsed, file: File) {
+    const referenceDate = `${parsed.referenceMonth}-01`;
+    if (parsed.uc_number === GENERATING_UC) {
+      await integrateExpense({
+        description: "Fatura Energia Usina",
+        amount: parsed.distributor_invoice ?? 0,
+        referenceDate,
+        dueDate: parsed.due_date,
+        file,
+      });
+      return;
+    }
+    const client = data.clients.find((c) => c.uc_number.replace(/\D/g, "") === parsed.uc_number);
+    if (!client) {
+      const msg = `UC ${parsed.uc_number} não é de nenhum cliente da usina.`;
+      toast.error(msg);
+      setUploadInvoiceResult(msg);
+      return;
+    }
+    if (data.invoices.some((inv) => inv.client_id === client.id && inv.reference_date === referenceDate)) {
+      const msg = `A fatura de ${monthLabelFromISO(referenceDate)} de ${client.name} já foi lançada.`;
+      toast.error(msg);
+      setUploadInvoiceResult(msg);
+      return;
+    }
+    const attachmentUrl = await uploadInvoiceFile(`${client.id}/${Date.now()}.pdf`, file);
+    const existingPending = data.pending.find((p) => p.client_id === client.id && p.reference_date === referenceDate);
+    if (existingPending) {
+      if (!existingPending.attachment_url && attachmentUrl) {
+        await supabase.from("pending_invoice_imports").update({ attachment_url: attachmentUrl }).eq("id", existingPending.id);
+        const msg = `A pendência de ${client.name} já existia — anexei o PDF nela.`;
+        toast.success(msg);
+        setUploadInvoiceResult(msg);
+      } else {
+        const msg = `Já existe uma pendência de ${client.name} para ${monthLabelFromISO(referenceDate)}.`;
+        toast.error(msg);
+        setUploadInvoiceResult(msg);
+      }
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+      return;
+    }
+    // Preço do mês: usa o da fatura; sem preço, busca em outra pendência ou fatura lançada do mês.
+    let priceKw = parsed.price_kw ?? 0;
+    let exactStr = parsed.price_kw !== null ? String(parsed.price_kw) : null;
+    if (!priceKw) {
+      const monthPending = data.pending.find((p) => p.reference_date.slice(0, 7) === parsed.referenceMonth && p.price_kw > 0);
+      if (monthPending) {
+        priceKw = monthPending.price_kw;
+        exactStr = cleanExactPrice(monthPending);
+      } else {
+        const monthInvoice = data.invoices.find(
+          (inv) => inv.reference_date.slice(0, 7) === parsed.referenceMonth && /\[\[price_kw_exact:([^\]]+)\]\]/.test(inv.notes ?? ""),
+        );
+        if (monthInvoice) {
+          exactStr = monthInvoice.notes!.match(/\[\[price_kw_exact:([^\]]+)\]\]/)![1].trim();
+          priceKw = parseNumBR(exactStr);
+        }
+      }
+    }
+    const { error } = await supabase.from("pending_invoice_imports").insert({
+      client_id: client.id,
+      uc_number: parsed.uc_number,
+      reference_date: referenceDate,
+      consumption_kw: parsed.consumption_kw ?? 0,
+      price_kw: priceKw,
+      price_kw_exact: exactStr,
+      public_lighting: parsed.public_lighting ?? 0,
+      interest_fine: parsed.interest_fine ?? 0,
+      distributor_invoice: parsed.distributor_invoice ?? 0,
+      due_date: parsed.due_date,
+      attachment_url: attachmentUrl,
+      source_pdf_filename: file.name,
+      status: "pending",
+    });
+    if (error) {
+      if (/duplicate key/i.test(error.message)) {
+        const msg = `Já existe uma pendência de ${client.name} para ${monthLabelFromISO(referenceDate)}.`;
+        toast.error(msg);
+        setUploadInvoiceResult(msg);
+      } else {
+        toast.error(error.message);
+        setUploadInvoiceResult(error.message);
+      }
+      return;
+    }
+    // Com preço: preenche as outras pendências do mês que estavam sem preço.
+    if (priceKw > 0) {
+      const blanks = data.pending.filter((p) => p.reference_date.slice(0, 7) === parsed.referenceMonth && !(p.price_kw > 0));
+      for (const b of blanks) {
+        await supabase.from("pending_invoice_imports").update({ price_kw: priceKw, price_kw_exact: exactStr }).eq("id", b.id);
+      }
+    }
+    const msg = `Fatura de ${client.name} (${monthLabelFromISO(referenceDate)}) integrada — ícone pulsando ${priceKw > 0 ? "verde" : "vermelho (falta o preço do kW)"}.`;
+    toast.success(msg);
+    setUploadInvoiceResult(msg);
+    qc.invalidateQueries({ queryKey: ["faturas-page"] });
+  }
+
+  /** Lê o PDF anexado e integra sozinho (pendência de cliente ou despesa da usina). */
+  async function handleInvoicePdfUpload(file: File) {
+    if (!file || uploadingInvoice) return;
+    setUploadingInvoice(true);
+    setUploadInvoiceResult(null);
+    try {
+      const text = await extractPdfText(await file.arrayBuffer());
+      const parsed = parseInvoiceText(text, file.name);
+      if ("error" in parsed) {
+        toast.error(parsed.error);
+        setUploadInvoiceResult(parsed.error);
+        return;
+      }
+      if (parsed.kind === "demae") await integrateDemaeBill(parsed, file);
+      else await integrateEquatorialBill(parsed, file);
+    } catch (err: any) {
+      const msg = `Não consegui ler o PDF: ${err?.message ?? "erro desconhecido"}`;
+      toast.error(msg);
+      setUploadInvoiceResult(msg);
+    } finally {
+      setUploadingInvoice(false);
     }
   }
 
@@ -568,6 +874,15 @@ function FaturasPage() {
           >
             {showInactive ? "Ver ativos" : "Ver inativos"}
           </Button>
+          {bulkTargets.length > 0 && (
+            <Button
+              onClick={() => setBulkOpen(true)}
+              disabled={bulkRunning}
+              className="gap-2 bg-emerald-600 hover:bg-emerald-600/90 text-white rounded-lg px-4 py-2 font-bold shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+            >
+              <Zap className="h-4 w-4" /> Lançar todas ({bulkTargets.length})
+            </Button>
+          )}
           <Button
             onClick={() => setNewClientOpen(true)}
             className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
@@ -795,6 +1110,36 @@ function FaturasPage() {
         </Card>
       )}
 
+      {/* Anexar fatura em PDF — quando a fatura não chegou por e-mail. */}
+      <Card className="glass-card border-border p-5 space-y-3">
+        <h2 className="text-base font-bold text-foreground">Anexar fatura (PDF)</h2>
+        <p className="text-sm text-muted-foreground">
+          Se alguma fatura não chegou por e-mail, anexe o PDF aqui que o sistema integra sozinho:
+          fatura de cliente vira pendência (o ícone passa a pulsar) e fatura da usina
+          (energia ou água) vira despesa no Fluxo de Caixa. Vale para fatura da Equatorial
+          e conta de água do Demae.
+        </p>
+        <div>
+          <Button variant="outline" type="button" className="gap-2 relative" disabled={uploadingInvoice} asChild>
+            <label className="cursor-pointer">
+              <Paperclip className="h-4 w-4" />
+              {uploadingInvoice ? "Lendo PDF…" : "Selecionar PDF"}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleInvoicePdfUpload(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </Button>
+        </div>
+        {uploadInvoiceResult && <p className="text-sm text-muted-foreground">{uploadInvoiceResult}</p>}
+      </Card>
+
       <div className="grid grid-cols-1 gap-4 xs:grid-cols-2 lg:grid-cols-3 [&>*]:glass-card-interactive">
         {shown.map((c) => {
           const pend = pendingByClient.get(c.id);
@@ -963,6 +1308,84 @@ function FaturasPage() {
                 }}
               >
                 Preencher manualmente
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {bulkOpen && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !bulkRunning) setBulkOpen(false);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Lançar todas as faturas completas</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              {bulkTargets.length} fatura{bulkTargets.length === 1 ? "" : "s"} pronta{bulkTargets.length === 1 ? "" : "s"} para lançar de uma vez.
+              {incompletePendings.length > 0
+                ? ` ${incompletePendings.length} incompleta${incompletePendings.length === 1 ? "" : "s"} fica${incompletePendings.length === 1 ? "" : "m"} aguardando dados.`
+                : ""}
+            </p>
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              {bulkTargets.map((p) => {
+                const client = clientById.get(p.client_id);
+                if (!client) return null;
+                const { cPaga } = launchValuesFromPending(client, p);
+                return (
+                  <div key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-sm">
+                    <span className="font-medium text-foreground">
+                      {client.name} · {monthLabelFromISO(p.reference_date)}
+                    </span>
+                    <span className="num font-semibold text-foreground">{brl(cPaga)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="space-y-2">
+              <Label>Status das faturas lançadas</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkStatus("pendente")}
+                  className={`h-9 px-4 rounded-lg text-[11px] font-bold uppercase tracking-wider border transition-all ${
+                    bulkStatus === "pendente"
+                      ? "bg-amber-500 text-white border-amber-500"
+                      : "bg-background border-border text-muted-foreground hover:border-amber-500"
+                  }`}
+                >
+                  Pendente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkStatus("pago")}
+                  className={`h-9 px-4 rounded-lg text-[11px] font-bold uppercase tracking-wider border transition-all ${
+                    bulkStatus === "pago"
+                      ? "bg-emerald-600 text-white border-emerald-600"
+                      : "bg-background border-border text-muted-foreground hover:border-emerald-500"
+                  }`}
+                >
+                  Pago
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">Pendente = o cliente ainda não pagou. Mude para Pago se já recebeu.</p>
+            </div>
+            {bulkProgress && (
+              <p className="text-sm font-medium text-foreground">
+                Lançando {bulkProgress.done} de {bulkProgress.total}…
+              </p>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setBulkOpen(false)} disabled={bulkRunning}>
+                Cancelar
+              </Button>
+              <Button onClick={runBulkLaunch} disabled={bulkRunning}>
+                {bulkRunning
+                  ? `Lançando… ${bulkProgress?.done ?? 0}/${bulkProgress?.total ?? 0}`
+                  : `Lançar ${bulkTargets.length} fatura${bulkTargets.length === 1 ? "" : "s"}`}
               </Button>
             </DialogFooter>
           </DialogContent>
