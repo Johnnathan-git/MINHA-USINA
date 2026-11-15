@@ -78,6 +78,10 @@ export const Route = createFileRoute("/_app/relatorio")({
     meta: [
       { title: "Controle Cliente — Usina dos Irmãos" },
       { name: "description", content: "Monte, edite e envie a planilha mensal de economia para cada cliente." },
+      { property: "og:title", content: "Controle Cliente — Usina dos Irmãos" },
+      { property: "og:description", content: "Monte, edite e envie a planilha mensal de economia para cada cliente." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

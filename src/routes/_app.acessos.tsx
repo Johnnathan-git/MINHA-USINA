@@ -27,6 +27,10 @@ export const Route = createFileRoute("/_app/acessos")({
     meta: [
       { title: "Acessos — Usina dos Irmãos" },
       { name: "description", content: "Gerencie usuários e permissões do sistema." },
+      { property: "og:title", content: "Acessos — Usina dos Irmãos" },
+      { property: "og:description", content: "Gerencie usuários e permissões do sistema." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });

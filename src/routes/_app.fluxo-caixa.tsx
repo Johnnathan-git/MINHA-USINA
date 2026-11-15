@@ -255,10 +255,11 @@ const fluxoQ = queryOptions({
     if (c.error) throw c.error;
     // attachment_path só existe após aplicar a migration; sem ela, a página
     // segue sem o botão de envio (mesmo cuidado da página Faturas).
-    let e = await supabase
+    const primaryExpenses = await supabase
       .from("expenses")
       .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total,attachment_path")
       .order("reference_date", { ascending: false });
+    let e: { data: (Omit<Expense, "attachment_path"> & { attachment_path?: string | null })[] | null; error: { message: string } | null } = primaryExpenses;
     if (e.error) {
       e = await supabase
         .from("expenses")
@@ -285,6 +286,10 @@ export const Route = createFileRoute("/_app/fluxo-caixa")({
     meta: [
       { title: "Fluxo de Caixa — Usina dos Irmãos" },
       { name: "description", content: "Controle mensal de receitas e despesas." },
+      { property: "og:title", content: "Fluxo de Caixa — Usina dos Irmãos" },
+      { property: "og:description", content: "Controle mensal de receitas e despesas." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
 });
@@ -914,7 +919,7 @@ function Fluxo() {
 
       {expenseSearchOpen && (
         <Dialog open onOpenChange={(open) => !open && setExpenseSearchOpen(false)}>
-          <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogContent aria-describedby={undefined} className="max-h-[90vh] max-w-3xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Buscar despesas</DialogTitle>
             </DialogHeader>
@@ -1074,7 +1079,7 @@ function Fluxo() {
 
       {invoiceEdit && (
         <Dialog open onOpenChange={(open) => !open && setInvoiceEdit(null)}>
-          <DialogContent className="max-w-md">
+          <DialogContent aria-describedby={undefined} className="max-w-md">
             <DialogHeader>
               <DialogTitle>Editar fatura</DialogTitle>
             </DialogHeader>
@@ -1126,7 +1131,7 @@ function Fluxo() {
 
       {bankHistoryOpen && (
         <Dialog open onOpenChange={(open) => !open && setBankHistoryOpen(false)}>
-          <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+          <DialogContent aria-describedby={undefined} className="max-h-[85vh] max-w-lg overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Histórico — Conta Bancária</DialogTitle>
             </DialogHeader>
@@ -1171,7 +1176,7 @@ function Fluxo() {
 
       {bankOpen && (
         <Dialog open onOpenChange={(open) => !open && setBankOpen(false)}>
-          <DialogContent className="max-w-md">
+          <DialogContent aria-describedby={undefined} className="max-w-md">
             <DialogHeader>
               <DialogTitle>Ajustar saldo — Conta Bancária</DialogTitle>
             </DialogHeader>
@@ -1207,7 +1212,7 @@ function Fluxo() {
             if (!open) setExpenseResendChoice(null);
           }}
         >
-          <DialogContent>
+          <DialogContent aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>
                 {expenseResendChoice.existing.status === "sent"
@@ -1456,7 +1461,7 @@ function ExpenseDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent aria-describedby={undefined} className="max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{expense ? "Editar Despesa" : "Nova Despesa"}</DialogTitle>
         </DialogHeader>
