@@ -16,7 +16,8 @@ import {
 import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
 import { buildWhatsAppMessage, DEFAULT_WHATSAPP_TEMPLATE, formatPriceKw, type TableData } from "@/lib/whatsapp";
-import { extractPdfText, parseInvoiceText, type DemaeParsed, type EquatorialParsed } from "@/lib/parseInvoicePdf";
+import { extractPdfText, parseInvoiceText, type DemaeParsed, type EquatorialParsed, type ParsedInvoicePdf } from "@/lib/parseInvoicePdf";
+import { ImportReviewDialog } from "@/components/ImportReviewDialog";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -350,6 +351,14 @@ function FaturasPage() {
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
   const [uploadInvoiceResult, setUploadInvoiceResult] = useState<string | null>(null);
+  // PDF lido e aguardando conferência: nada é gravado até o "Confirmar lançamento".
+  const [importReview, setImportReview] = useState<{
+    parsed: ParsedInvoicePdf;
+    file: File;
+    target: string;
+    error: string | null;
+    note: string | null;
+  } | null>(null);
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
@@ -669,7 +678,36 @@ function FaturasPage() {
     qc.invalidateQueries({ queryKey: ["faturas-page"] });
   }
 
-  /** Lê o PDF anexado e integra sozinho (pendência de cliente ou despesa da usina). */
+  /** Para quem vai a fatura lida e se dá para lançar — mostrado na conferência. */
+  function describeImport(parsed: ParsedInvoicePdf): { target: string; error: string | null; note: string | null } {
+    if (parsed.kind === "demae") {
+      if (parsed.matricula !== PLANT_MATRICULA) {
+        return { target: "Conta de água (Demae)", error: `Matrícula ${parsed.matricula} não é da usina (é de outro imóvel).`, note: null };
+      }
+      return { target: "Despesa: Fatura Agua Usina", error: null, note: null };
+    }
+    if (parsed.uc_number === GENERATING_UC) return { target: "Despesa: Fatura Energia Usina", error: null, note: null };
+    const client = data?.clients.find((c) => c.uc_number.replace(/\D/g, "") === parsed.uc_number);
+    if (!client) return { target: `UC ${parsed.uc_number}`, error: `A UC ${parsed.uc_number} não é de nenhum cliente da usina.`, note: null };
+    const referenceDate = `${parsed.referenceMonth}-01`;
+    if (data?.invoices.some((inv) => inv.client_id === client.id && inv.reference_date === referenceDate)) {
+      return {
+        target: `Fatura de ${client.name}`,
+        error: `A fatura de ${monthLabelFromISO(referenceDate)} de ${client.name} já foi lançada.`,
+        note: null,
+      };
+    }
+    const hasPending = data?.pending.some((p) => p.client_id === client.id && p.reference_date === referenceDate);
+    return {
+      target: `Fatura de ${client.name}`,
+      error: null,
+      note: hasPending
+        ? `Já existe uma pendência de ${client.name} para ${monthLabelFromISO(referenceDate)}. Confirmar só anexa o PDF nela.`
+        : null,
+    };
+  }
+
+  /** Lê o PDF anexado e abre a conferência — nada é gravado ainda. */
   async function handleInvoicePdfUpload(file: File) {
     if (!file || uploadingInvoice) return;
     setUploadingInvoice(true);
@@ -682,8 +720,7 @@ function FaturasPage() {
         setUploadInvoiceResult(parsed.error);
         return;
       }
-      if (parsed.kind === "demae") await integrateDemaeBill(parsed, file);
-      else await integrateEquatorialBill(parsed, file);
+      setImportReview({ parsed, file, ...describeImport(parsed) });
     } catch (err: any) {
       const msg = `Não consegui ler o PDF: ${err?.message ?? "erro desconhecido"}`;
       toast.error(msg);
@@ -691,6 +728,15 @@ function FaturasPage() {
     } finally {
       setUploadingInvoice(false);
     }
+  }
+
+  /** "Confirmar lançamento" da conferência: integra com os valores revisados. */
+  async function confirmImport(edited: ParsedInvoicePdf) {
+    if (!importReview) return;
+    if (edited.kind === "demae") await integrateDemaeBill(edited, importReview.file);
+    else await integrateEquatorialBill(edited, importReview.file);
+    setImportReview(null);
+    qc.invalidateQueries({ queryKey: ["faturas-page"] });
   }
 
   // Mensagens de WhatsApp do mês selecionado na seção de fechamento.
@@ -1119,10 +1165,10 @@ function FaturasPage() {
       <Card className="glass-card border-border p-5 space-y-3">
         <h2 className="text-base font-bold text-foreground">Anexar fatura (PDF)</h2>
         <p className="text-sm text-muted-foreground">
-          Se alguma fatura não chegou por e-mail, anexe o PDF aqui que o sistema integra sozinho:
-          fatura de cliente vira pendência (o ícone passa a pulsar) e fatura da usina
-          (energia ou água) vira despesa no Fluxo de Caixa. Vale para fatura da Equatorial
-          e conta de água do Demae.
+          Se alguma fatura não chegou por e-mail, anexe o PDF aqui. O sistema lê os dados e mostra
+          para você conferir (e corrigir, se precisar) antes de lançar: fatura de cliente vira
+          pendência (o ícone passa a pulsar) e fatura da usina (energia ou água) vira despesa no
+          Fluxo de Caixa. Vale para fatura da Equatorial e conta de água do Demae.
         </p>
         <div>
           <Button variant="outline" type="button" className="gap-2 relative" disabled={uploadingInvoice} asChild>
@@ -1143,6 +1189,20 @@ function FaturasPage() {
           </Button>
         </div>
         {uploadInvoiceResult && <p className="text-sm text-muted-foreground">{uploadInvoiceResult}</p>}
+        {importReview && (
+          <ImportReviewDialog
+            parsed={importReview.parsed}
+            fileName={importReview.file.name}
+            target={importReview.target}
+            error={importReview.error}
+            note={importReview.note}
+            onCancel={() => {
+              setImportReview(null);
+              setUploadInvoiceResult("Importação cancelada — nada foi lançado.");
+            }}
+            onConfirm={confirmImport}
+          />
+        )}
       </Card>
 
       <div className="grid grid-cols-1 gap-4 xs:grid-cols-2 lg:grid-cols-3 [&>*]:glass-card-interactive">
@@ -1719,6 +1779,20 @@ function InvoiceDialog({
 
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+
+  /** Apaga a pendência que veio do e-mail/PDF sem lançar nada (o ícone para de pulsar). */
+  async function discardPending() {
+    if (!pending) return;
+    if (!window.confirm(`Descartar a pendência de ${monthLabelFromISO(pending.reference_date)} de ${client.name}? Nada será lançado.`)) return;
+    setDiscarding(true);
+    const { error } = await supabase.from("pending_invoice_imports").delete().eq("id", pending.id);
+    setDiscarding(false);
+    if (error) return toast.error(`Não consegui descartar: ${error.message}`);
+    toast.success("Pendência descartada");
+    qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    onClose();
+  }
 
   async function submit() {
     if (!f.reference_month) {
@@ -1952,11 +2026,25 @@ function InvoiceDialog({
             )}
           </div>
         </div>
-        <DialogFooter className="mt-6">
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={submit} disabled={saving} className="bg-primary text-primary-foreground">
-            {saving ? "Salvando..." : invoice ? "Salvar alterações" : "Lançar fatura"}
-          </Button>
+        <DialogFooter className="mt-6 gap-2 sm:justify-between">
+          {!invoice && pending ? (
+            <Button
+              variant="ghost"
+              onClick={() => void discardPending()}
+              disabled={saving || discarding}
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              {discarding ? "Descartando..." : "Descartar pendência"}
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancelar</Button>
+            <Button onClick={submit} disabled={saving} className="bg-primary text-primary-foreground">
+              {saving ? "Salvando..." : invoice ? "Salvar alterações" : "Lançar fatura"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
