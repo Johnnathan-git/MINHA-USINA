@@ -18,6 +18,7 @@ import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, 
 import { buildWhatsAppMessage, DEFAULT_WHATSAPP_TEMPLATE, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { extractPdfText, parseInvoiceText, type DemaeParsed, type EquatorialParsed, type ParsedInvoicePdf } from "@/lib/parseInvoicePdf";
 import { ImportReviewDialog } from "@/components/ImportReviewDialog";
+import { fetchInvoicePdf } from "@/lib/invoicePdf";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 
@@ -376,13 +377,7 @@ function FaturasPage() {
     const fileName = path.split("/").pop() || "fatura.pdf";
     setWaPdf({ title, fileName, url: null, error: null, loading: true });
     try {
-      const res = await fetch("/api/public/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
+      const blob = await fetchInvoicePdf(path);
       const url = URL.createObjectURL(blob);
       setWaPdf((v) => (v ? { ...v, url, loading: false } : v));
     } catch (e) {
@@ -1624,13 +1619,8 @@ function FaturaPdfDialog({ path, title, onClose }: { path: string; title: string
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/public/download", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path }),
-        });
-        if (!res.ok) throw new Error(await res.text());
-        url = URL.createObjectURL(await res.blob());
+        const blob = await fetchInvoicePdf(path);
+        url = URL.createObjectURL(blob);
         if (!cancelled) setState({ url, error: null });
       } catch (e) {
         if (!cancelled) setState({ url: null, error: "Não foi possível carregar o PDF. " + ((e as Error)?.message || "") });
@@ -2139,13 +2129,8 @@ function HistoryDialog({
     const fileName = path.split("/").pop() || "fatura.pdf";
     setPdf({ title, fileName, url: null, error: null, loading: true });
     try {
-      const res = await fetch("/api/public/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const url = URL.createObjectURL(await res.blob());
+      const blob = await fetchInvoicePdf(path);
+      const url = URL.createObjectURL(blob);
       setPdf((v) => (v ? { ...v, url, loading: false } : v));
     } catch (e) {
       setPdf((v) => (v ? { ...v, error: "Não foi possível carregar o PDF. " + ((e as Error)?.message || ""), loading: false } : v));

@@ -11,30 +11,22 @@ type ManagedUser = {
   display_name: string | null;
 };
 
-async function isBootstrapMode() {
-  try {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { count } = await supabaseAdmin
-      .from("user_roles")
-      .select("user_id", { count: "exact", head: true })
-      .eq("role", "admin");
-    return (count ?? 0) === 0;
-  } catch (e) {
-    console.error("[acessos] isBootstrapMode falhou:", e);
-    return false;
-  }
-}
-
-async function isEffectiveAdmin(supabase: any, userId: string) {
-  const { data, error } = await supabase
+/**
+ * Admin = tem o papel "admin" em user_roles. Consulta com a chave de serviço,
+ * só para o próprio usuário logado (o id vem do token já validado).
+ * Não existe mais o "modo inicial" (sem nenhum admin, qualquer um virava
+ * admin): já há administradores cadastrados e isso abria brecha.
+ */
+async function isEffectiveAdmin(_supabase: any, userId: string) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { data, error } = await supabaseAdmin
     .from("user_roles")
     .select("role")
     .eq("user_id", userId)
     .eq("role", "admin")
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (data) return true;
-  return await isBootstrapMode();
+  return Boolean(data);
 }
 
 async function assertEffectiveAdmin(supabase: any, userId: string) {
@@ -50,12 +42,11 @@ export const listManagedUsers = createServerFn({ method: "GET" })
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: list, error } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
     if (error) throw new Error(error.message);
-    const [{ data: roles }, { data: perms }, { data: links }, { data: profiles }, bootstrapMode] = await Promise.all([
+    const [{ data: roles }, { data: perms }, { data: links }, { data: profiles }] = await Promise.all([
       supabaseAdmin.from("user_roles").select("user_id,role"),
       supabaseAdmin.from("user_permissions").select("user_id,module"),
       supabaseAdmin.from("user_clients").select("user_id,client_id"),
       supabaseAdmin.from("user_profiles").select("user_id,display_name"),
-      isBootstrapMode(),
     ]);
     const adminSet = new Set((roles ?? []).filter((r: any) => r.role === "admin").map((r: any) => r.user_id));
     const permMap = new Map<string, string[]>();
@@ -75,7 +66,7 @@ export const listManagedUsers = createServerFn({ method: "GET" })
       client_id: clientMap.get(u.id) ?? null,
       display_name: profiles?.find((p: any) => p.user_id === u.id)?.display_name ?? null,
     }));
-    return { users, bootstrap: bootstrapMode };
+    return { users, bootstrap: false };
   });
 
 export const createManagedUser = createServerFn({ method: "POST" })
@@ -189,14 +180,11 @@ export const getMyAccess = createServerFn({ method: "GET" })
     ]);
 
     const is_admin = (rolesRes.data ?? []).some((r: any) => r.role === "admin");
-    // Bootstrap só precisa ser consultado quando o usuário ainda não é admin.
-    // No uso normal isso elimina uma consulta extra em toda abertura do sistema.
-    const bootstrap = is_admin ? false : await isBootstrapMode();
 
     return {
       is_admin,
-      bootstrap,
-      effective_admin: is_admin || bootstrap,
+      bootstrap: false,
+      effective_admin: is_admin,
       permissions: (permsRes.data ?? []).map((p: any) => p.module as string),
       client_id: (linkRes.data as any)?.client_id ?? null,
       display_name: (profileRes.data as any)?.display_name ?? null,

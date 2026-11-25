@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSuspenseQuery, queryOptions } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchInvoicePdf } from "@/lib/invoicePdf";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { brl, monthLabelFromISO } from "@/lib/format";
@@ -344,12 +345,16 @@ function Relatorio() {
                         onClick={async () => {
                           try {
                             const path = r.attachment_url!;
-                            const { data: signed, error } = await supabase.storage
-                              .from("faturas_v3_privado_v2")
-                              .createSignedUrl(path, 3600);
-                            if (error) throw error;
-                            const downloadUrl = `/api/public/download?token=${encodeURIComponent(signed.signedUrl)}&name=${encodeURIComponent(path.split("/").pop() || "fatura.pdf")}`;
-                            window.location.href = downloadUrl;
+                            const name = path.split("/").pop() || "fatura.pdf";
+                            const blob = await fetchInvoicePdf(path, { name, disposition: "attachment" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = name;
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                            setTimeout(() => URL.revokeObjectURL(url), 10_000);
                           } catch (err: any) {
                             alert("Erro ao abrir arquivo: " + err.message);
                           }
