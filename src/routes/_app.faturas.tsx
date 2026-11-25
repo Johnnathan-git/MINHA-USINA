@@ -1163,13 +1163,7 @@ function FaturasPage() {
 
       {/* Anexar fatura em PDF — quando a fatura não chegou por e-mail. */}
       <Card className="glass-card border-border p-5 space-y-3">
-        <h2 className="text-base font-bold text-foreground">Anexar fatura (PDF)</h2>
-        <p className="text-sm text-muted-foreground">
-          Se alguma fatura não chegou por e-mail, anexe o PDF aqui. O sistema lê os dados e mostra
-          para você conferir (e corrigir, se precisar) antes de lançar: fatura de cliente vira
-          pendência (o ícone passa a pulsar) e fatura da usina (energia ou água) vira despesa no
-          Fluxo de Caixa. Vale para fatura da Equatorial e conta de água do Demae.
-        </p>
+        <h2 className="text-base font-bold text-foreground">Anexar fatura para lançamento</h2>
         <div>
           <Button variant="outline" type="button" className="gap-2 relative" disabled={uploadingInvoice} asChild>
             <label className="cursor-pointer">
@@ -2061,6 +2055,31 @@ function HistoryDialog({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  // Visualizador do PDF anexado à fatura lançada (bucket privado, via /api/public/download).
+  const [pdf, setPdf] = useState<{ title: string; fileName: string; url: string | null; error: string | null; loading: boolean } | null>(null);
+  async function openPdf(inv: Invoice) {
+    const path = inv.attachment_url;
+    if (!path) return;
+    const title = `${client.name} — ${monthLabelFromISO(inv.reference_date)}`;
+    const fileName = path.split("/").pop() || "fatura.pdf";
+    setPdf({ title, fileName, url: null, error: null, loading: true });
+    try {
+      const res = await fetch("/api/public/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const url = URL.createObjectURL(await res.blob());
+      setPdf((v) => (v ? { ...v, url, loading: false } : v));
+    } catch (e) {
+      setPdf((v) => (v ? { ...v, error: "Não foi possível carregar o PDF. " + ((e as Error)?.message || ""), loading: false } : v));
+    }
+  }
+  function closePdf() {
+    if (pdf?.url) URL.revokeObjectURL(pdf.url);
+    setPdf(null);
+  }
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ["client-invoices", client.id],
     queryFn: async () => {
@@ -2158,7 +2177,17 @@ function HistoryDialog({
                         <td className="py-2 px-1.5 text-right text-negative tabular-nums">{brl(Number(inv.distributor_invoice))}</td>
                         <td className="py-2 px-1.5 text-right font-semibold text-emerald-500 tabular-nums">{brl(lucro)}</td>
                         <td className="py-2 px-1 text-center">
-                          {inv.attachment_url ? <Paperclip className="h-3.5 w-3.5 mx-auto text-muted-foreground" /> : "—"}
+                          {inv.attachment_url ? (
+                            <button
+                              type="button"
+                              onClick={() => void openPdf(inv)}
+                              className="p-1 text-primary hover:text-primary/80"
+                              title="Ver fatura"
+                              aria-label={`Ver fatura de ${monthLabelFromISO(inv.reference_date)}`}
+                            >
+                              <Paperclip className="h-3.5 w-3.5 mx-auto" />
+                            </button>
+                          ) : "—"}
                         </td>
                         <td className="py-2 px-1 text-center">
                           {invoicePaymentStatus(inv.notes) === "pago" ? (
@@ -2211,6 +2240,27 @@ function HistoryDialog({
           }}
         />
       )}
+      <Dialog open={!!pdf} onOpenChange={(o) => !o && closePdf()}>
+        <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{pdf?.title ?? "Fatura"}</DialogTitle>
+          </DialogHeader>
+          {pdf?.loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" /> Carregando fatura...
+            </div>
+          ) : pdf?.error ? (
+            <p className="text-sm text-red-500">{pdf.error}</p>
+          ) : pdf?.url ? (
+            <div className="space-y-3">
+              <PdfViewer url={pdf.url} />
+              <a href={pdf.url} download={pdf.fileName} className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline">
+                <Paperclip className="h-3.5 w-3.5" /> Baixar PDF
+              </a>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

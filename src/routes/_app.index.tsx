@@ -127,32 +127,43 @@ function businessDaysInMonth(year: number, month: number): number {
   return n;
 }
 
+// Regra do Cofrinho (Mercado Pago): até R$ 5.000 rende 115% do CDI; o que
+// passar disso rende 100% do CDI. A taxa diária é o CDI diário do mês
+// (CDI mensal real distribuído pelos dias úteis) vezes o percentual.
+const COFRINHO_LIMIT = 5000;
+const COFRINHO_PCT_UP_TO_LIMIT = 1.15;
+const COFRINHO_PCT_ABOVE_LIMIT = 1.0;
+
 function loanYield(total: number, reembolsos: Expense[], today: Date): number {
   const start = new Date(2026, 6, 1); // 01/07/2026
-  const dailyRateCache = new Map<string, number>();
-  const dailyRate = (d: Date): number => {
+  const cdiCache = new Map<string, number>();
+  const dailyCdi = (d: Date): number => {
     const key = isoDate(d).slice(0, 7);
-    const cached = dailyRateCache.get(key);
+    const cached = cdiCache.get(key);
     if (cached != null) return cached;
     const monthly = MONTHLY_CDI[key];
     const rate = monthly != null
-      ? (1 + monthly) ** (1.15 / businessDaysInMonth(d.getFullYear(), d.getMonth())) - 1
-      : (1 + 1.15 * CDI_ANNUAL) ** (1 / 252) - 1;
-    dailyRateCache.set(key, rate);
+      ? (1 + monthly) ** (1 / businessDaysInMonth(d.getFullYear(), d.getMonth())) - 1
+      : (1 + CDI_ANNUAL) ** (1 / 252) - 1;
+    cdiCache.set(key, rate);
     return rate;
   };
+  const sorted = [...reembolsos].sort((a, b) => a.reference_date.localeCompare(b.reference_date));
   let balance = total;
   let yield_ = 0;
   let idx = 0;
   const d = new Date(start);
   while (d <= today) {
-    while (idx < reembolsos.length && reembolsos[idx].reference_date <= isoDate(d)) {
-      balance -= Number(reembolsos[idx].amount);
+    while (idx < sorted.length && sorted[idx].reference_date <= isoDate(d)) {
+      balance -= Number(sorted[idx].amount);
       idx++;
     }
     balance = Math.max(0, balance);
     if (d.getDay() !== 0 && d.getDay() !== 6 && !HOLIDAYS.has(isoDate(d))) {
-      yield_ += balance * dailyRate(d);
+      const cdi = dailyCdi(d);
+      const upTo = Math.min(balance, COFRINHO_LIMIT);
+      const above = Math.max(0, balance - COFRINHO_LIMIT);
+      yield_ += upTo * cdi * COFRINHO_PCT_UP_TO_LIMIT + above * cdi * COFRINHO_PCT_ABOVE_LIMIT;
     }
     d.setDate(d.getDate() + 1);
   }
@@ -430,11 +441,11 @@ function Dashboard() {
                 <div className="mt-1 text-2xl font-bold text-foreground num-lg">{brl(reembolsoRestante)}</div>
               </div>
               <div className="text-right">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Rendimento líquido 115% CDI</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Rendimento líquido</div>
                 <div className="mt-1 text-2xl font-bold text-[#2F6F62] num-lg">{brl(rendimentoLiquido)}</div>
               </div>
             </div>
-            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Desde 01/07/2026, sobre o saldo devedor. Líquido de IR ({(irRendimento * 100).toFixed(0)}%), saque em abr/2027.</p>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">Desde 01/07/2026, sobre o saldo devedor: 115% do CDI até R$ 5.000 e 100% no que passar. Líquido de IR ({(irRendimento * 100).toFixed(0)}%), saque em abr/2027.</p>
             <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-accent/50">
               <div
                 className="h-full rounded-full bg-[#2F6F62]"
