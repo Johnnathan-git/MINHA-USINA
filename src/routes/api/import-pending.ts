@@ -102,11 +102,14 @@ export const Route = createFileRoute('/api/import-pending')({
         if (pdfBase64) {
           try {
             const bytes = Buffer.from(pdfBase64, 'base64')
-            const filePath = `${client.id}/${Date.now()}.pdf`
-            const { error: uploadError } = await supabaseAdmin.storage
-              .from('faturas_v3_privado_v2')
-              .upload(filePath, bytes, { contentType: 'application/pdf' })
-            if (!uploadError) attachmentUrl = filePath
+            // Só PDF de verdade e até 15 MB (as faturas têm ~1 MB).
+            if (isValidPdf(bytes)) {
+              const filePath = `${client.id}/${Date.now()}.pdf`
+              const { error: uploadError } = await supabaseAdmin.storage
+                .from('faturas_v3_privado_v2')
+                .upload(filePath, bytes, { contentType: 'application/pdf' })
+              if (!uploadError) attachmentUrl = filePath
+            }
           } catch {
             // Segue sem anexo; a pendência ainda é criada.
           }
@@ -215,3 +218,8 @@ export const Route = createFileRoute('/api/import-pending')({
     },
   },
 })
+
+/** Confere se os bytes são um PDF (começa com "%PDF-") e cabem no limite. */
+function isValidPdf(bytes: Buffer): boolean {
+  return bytes.length > 0 && bytes.length <= 15 * 1024 * 1024 && bytes.subarray(0, 5).toString('latin1') === '%PDF-'
+}

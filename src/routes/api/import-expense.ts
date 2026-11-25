@@ -204,7 +204,9 @@ export const Route = createFileRoute('/api/import-expense')({
 async function uploadExpensePdf(supabaseAdmin: any, pdfBase64: string): Promise<string | null> {
   try {
     const bytes = Buffer.from(pdfBase64, 'base64')
-    if (bytes.length === 0) return null
+    // Só PDF de verdade e até 15 MB (boletos e faturas têm ~1 MB).
+    if (bytes.length === 0 || bytes.length > 15 * 1024 * 1024) return null
+    if (bytes.subarray(0, 5).toString('latin1') !== '%PDF-') return null
     const filePath = `expenses/${Date.now()}.pdf`
     const { error } = await supabaseAdmin.storage
       .from('faturas_v3_privado_v2')
