@@ -707,7 +707,7 @@ function FaturasPage() {
       for (let index = 0; index < pdfs.length; index++) {
         const file = pdfs[index];
         try {
-          const parsed = parseInvoiceText(await extractPdfText(await file.arrayBuffer()), file.name);
+          const parsed = parseInvoiceText(await extractPdfText(await file.arrayBuffer()), file.name, true);
           if ("error" in parsed) {
             failed.push(`${file.name}: ${parsed.error}`);
           } else if (parsed.kind !== "equatorial") {
@@ -728,7 +728,9 @@ function FaturasPage() {
             }
             const label = client ? `${client.name} ${monthLabelFromISO(`${parsed.referenceMonth}-01`)}` : "";
             if (!client) {
-              failed.push(`${file.name}: UC ${parsed.uc_number} não é de nenhum cliente`);
+              const mes = monthLabelFromISO(`${parsed.referenceMonth}-01`);
+              if (parsed.uc_number) failed.push(`${file.name}: UC ${parsed.uc_number} não é de nenhum cliente`);
+              else skipped.push(`${file.name}: ${mes}, ${brl(parsed.distributor_invoice ?? 0)} — nenhum lançamento sem anexo com esse valor`);
             } else {
               const mine = invoices.filter((i) => i.client_id === client.id);
               let target = mine.find((i) => i.reference_date.slice(0, 7) === parsed.referenceMonth);

@@ -121,14 +121,19 @@ export async function extractPdfText(data: ArrayBuffer): Promise<string> {
   }
 }
 
-function parseEquatorial(text: string, filename: string): EquatorialParsed | { error: string } {
+function parseEquatorial(text: string, filename: string, lenient = false): EquatorialParsed | { error: string } {
   const ucMatch = text.match(/(\d\.\d{3}\.\d{3}\.\d{3}-\d{2})/);
   const uc = ucMatch ? ucMatch[1].replace(/\D/g, "") : null;
   const refMatch = text.match(/\b(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\/(\d{4})\b/);
   const referenceMonth = refMatch ? `${refMatch[2]}-${MONTHS[refMatch[1]]}` : null;
-  const totalMatch = text.match(/R\$\s*\*+\s*([\d.,]+)\s+(\d{2}\/\d{2}\/\d{4})/);
-  const distributor_invoice = totalMatch ? num(totalMatch[1]) : null;
-  const due_date = totalMatch ? brDateToISO(totalMatch[2]) : null;
+  // Layout novo: "R$***123,45 19/11/2026". Layout antigo (até 2026): "FEV/2026 09/03/2026 R$***55,16".
+  const totalNew = text.match(/R\$\s*\*+\s*([\d.,]+)\s+(\d{2}\/\d{2}\/\d{4})/);
+  const totalOld = totalNew
+    ? null
+    : text.match(/\b(?:JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\/\d{4}\s+(\d{2}\/\d{2}\/\d{4})\s+R\$\s*\*+\s*([\d.,]+)/);
+  const totalBare = totalNew || totalOld ? null : text.match(/R\$\s*\*+\s*([\d.,]+)/);
+  const distributor_invoice = totalNew ? num(totalNew[1]) : totalOld ? num(totalOld[2]) : totalBare ? num(totalBare[1]) : null;
+  const due_date = totalNew ? brDateToISO(totalNew[2]) : totalOld ? brDateToISO(totalOld[1]) : null;
   const ncMatch = text.match(/CONSUMO N[AÃ]O COMPENSADO\s+kWh\s+([\d.,]+)\s+([\d.,]+)/i);
   let cons_nc = ncMatch ? num(ncMatch[1]) : null;
   let price_kw = ncMatch ? num(ncMatch[2]) : null;
@@ -162,16 +167,17 @@ function parseEquatorial(text: string, filename: string): EquatorialParsed | { e
   const generation_uc = genMatch ? genMatch[1] : null;
 
   const missing: string[] = [];
-  if (!uc) missing.push("UC");
+  // Modo tolerante (anexar faturas antigas): basta mês + valor; a UC antiga não segue o formato novo.
+  if (!uc && !lenient) missing.push("UC");
   if (!referenceMonth) missing.push("mês de referência");
-  if (cons_total === null) missing.push("consumo");
+  if (cons_total === null && !lenient) missing.push("consumo");
   if (distributor_invoice === null) missing.push("valor total da distribuidora");
   if (missing.length > 0) {
     return { error: `Não consegui ler: ${missing.join(", ")}.` };
   }
   return {
     kind: "equatorial",
-    uc_number: uc!,
+    uc_number: uc ?? "",
     referenceMonth: referenceMonth!,
     due_date,
     consumption_kw: cons_total,
@@ -222,10 +228,10 @@ function parseDemae(text: string, filename: string): DemaeParsed | { error: stri
 }
 
 /** Detecta o tipo pelo conteúdo e extrai os campos. Erro em texto legível. */
-export function parseInvoiceText(text: string, filename: string): ParsedInvoicePdf | { error: string } {
+export function parseInvoiceText(text: string, filename: string, lenient = false): ParsedInvoicePdf | { error: string } {
   if (/Matr[íi]cula:/i.test(text)) return parseDemae(text, filename);
-  if (/(\d\.\d{3}\.\d{3}\.\d{3}-\d{2})/.test(text) || /EQUATORIAL/i.test(text)) {
-    return parseEquatorial(text, filename);
+  if (/(\d\.\d{3}\.\d{3}\.\d{3}-\d{2})/.test(text) || /EQUATORIAL/i.test(text) || (lenient && /R\$\s*\*+/.test(text))) {
+    return parseEquatorial(text, filename, lenient);
   }
   return { error: "Não reconheci o formato: não é fatura da Equatorial nem do Demae." };
 }
