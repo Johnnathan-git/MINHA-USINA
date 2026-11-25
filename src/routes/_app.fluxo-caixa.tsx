@@ -242,7 +242,8 @@ const fluxoQ = queryOptions({
   queryKey: ["fluxo-page"],
   staleTime: 30_000,
   queryFn: async () => {
-    const [i, c, w] = await Promise.all([
+    // Tudo em paralelo (antes as despesas esperavam as outras consultas terminarem).
+    const [i, c, w, primaryExpenses] = await Promise.all([
       supabase.from("invoices").select("id,client_id,reference_date,client_pays,distributor_invoice,notes"),
       supabase.from("clients").select("id,name,color"),
       supabase
@@ -250,15 +251,15 @@ const fluxoQ = queryOptions({
         .select("id,expense_id,message_text,status,error,created_at,sent_at")
         .order("created_at", { ascending: false })
         .limit(200),
+      // attachment_path só existe após aplicar a migration; sem ela, a página
+      // segue sem o botão de envio (mesmo cuidado da página Faturas).
+      supabase
+        .from("expenses")
+        .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total,attachment_path")
+        .order("reference_date", { ascending: false }),
     ]);
     if (i.error) throw i.error;
     if (c.error) throw c.error;
-    // attachment_path só existe após aplicar a migration; sem ela, a página
-    // segue sem o botão de envio (mesmo cuidado da página Faturas).
-    const primaryExpenses = await supabase
-      .from("expenses")
-      .select("id,reference_date,category,description,amount,notes,installment_group,installment_no,installment_total,attachment_path")
-      .order("reference_date", { ascending: false });
     let e: { data: (Omit<Expense, "attachment_path"> & { attachment_path?: string | null })[] | null; error: { message: string } | null } = primaryExpenses;
     if (e.error) {
       e = await supabase

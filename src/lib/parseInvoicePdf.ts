@@ -1,4 +1,3 @@
-import * as pdfjsLib from "pdfjs-dist";
 
 /**
  * Leitura de fatura em PDF no navegador (Equatorial GO e Demae Caldas Novas).
@@ -95,6 +94,8 @@ function pageToLines(items: TextItem[]): string[] {
 
 /** Extrai o texto de um PDF (todas as páginas, uma linha por linha visual). */
 export async function extractPdfText(data: ArrayBuffer): Promise<string> {
+  // pdf.js carregado sob demanda: não pesa na abertura da página.
+  const pdfjsLib = await import("pdfjs-dist");
   // No navegador o pdf.js usa o worker (igual ao PdfViewer); no Node usa o fake worker.
   if (typeof window !== "undefined" && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
     try {

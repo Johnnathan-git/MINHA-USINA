@@ -359,10 +359,6 @@ function FaturasPage() {
     error: string | null;
     note: string | null;
   } | null>(null);
-  // Anexar faturas antigas em lote: progresso e relatório final.
-  const [attachRunning, setAttachRunning] = useState(false);
-  const [attachProgress, setAttachProgress] = useState<{ done: number; total: number } | null>(null);
-  const [attachReport, setAttachReport] = useState<{ ok: string[]; skipped: string[]; failed: string[] } | null>(null);
   const [historyFor, setHistoryFor] = useState<Client | null>(null);
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
@@ -680,108 +676,6 @@ function FaturasPage() {
     toast.success(msg);
     setUploadInvoiceResult(msg);
     qc.invalidateQueries({ queryKey: ["faturas-page"] });
-  }
-
-  /**
-   * Anexa PDFs a lançamentos JÁ existentes (faturas antigas), vários de uma vez.
-   * Lê cada PDF, acha o cliente pela UC e o lançamento pelo mês de referência;
-   * só grava em lançamento que ainda está sem anexo. Não cria nem altera valores.
-   */
-  async function attachOldInvoices(files: File[]) {
-    if (!files.length || attachRunning) return;
-    setAttachRunning(true);
-    setAttachReport(null);
-    setAttachProgress({ done: 0, total: files.length });
-    const ok: string[] = [];
-    const skipped: string[] = [];
-    const failed: string[] = [];
-    try {
-      const [{ data: clients, error: ce }, { data: invs, error: ie }] = await Promise.all([
-        supabase.from("clients").select("id,name,uc_number"),
-        supabase.from("invoices").select("id,client_id,reference_date,attachment_url,distributor_invoice"),
-      ]);
-      if (ce || ie) throw new Error((ce ?? ie)!.message);
-      const invoices = (invs ?? []).map((i) => ({ ...i }));
-      const pdfs = files.filter((f) => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
-      skipped.push(...files.filter((f) => !pdfs.includes(f)).map((f) => `${f.name}: não é PDF`));
-      for (let index = 0; index < pdfs.length; index++) {
-        const file = pdfs[index];
-        try {
-          const parsed = parseInvoiceText(await extractPdfText(await file.arrayBuffer()), file.name, true);
-          if ("error" in parsed) {
-            failed.push(`${file.name}: ${parsed.error}`);
-          } else if (parsed.kind !== "equatorial") {
-            skipped.push(`${file.name}: conta de água — não é fatura de cliente`);
-          } else if (parsed.uc_number === GENERATING_UC) {
-            skipped.push(`${file.name}: fatura da própria usina — não é de cliente`);
-          } else {
-            let client = (clients ?? []).find((c) => (c.uc_number ?? "").replace(/\D/g, "") === parsed.uc_number);
-            // Faturas antigas usam o número de UC anterior à troca da Equatorial: acha pelo valor + mês.
-            if (!client && parsed.distributor_invoice) {
-              const hit = invoices.filter(
-                (i) =>
-                  !i.attachment_url &&
-                  i.reference_date.slice(0, 7) === parsed.referenceMonth &&
-                  Math.abs(Number(i.distributor_invoice ?? 0) - parsed.distributor_invoice!) < 0.01,
-              );
-              if (hit.length === 1) client = (clients ?? []).find((c) => c.id === hit[0].client_id);
-            }
-            const label = client ? `${client.name} ${monthLabelFromISO(`${parsed.referenceMonth}-01`)}` : "";
-            if (!client) {
-              const mes = monthLabelFromISO(`${parsed.referenceMonth}-01`);
-              if (parsed.uc_number) failed.push(`${file.name}: UC ${parsed.uc_number} não é de nenhum cliente`);
-              else skipped.push(`${file.name}: ${mes}, ${brl(parsed.distributor_invoice ?? 0)} — nenhum lançamento sem anexo com esse valor`);
-            } else {
-              const mine = invoices.filter((i) => i.client_id === client.id);
-              let target = mine.find((i) => i.reference_date.slice(0, 7) === parsed.referenceMonth);
-              // Reserva: mesmo valor da fatura num mês vizinho (lançamento com mês trocado).
-              if (!target && parsed.distributor_invoice) {
-                const [y, m] = parsed.referenceMonth.split("-").map(Number);
-                const near = [new Date(y, m - 2, 1), new Date(y, m, 1)].map(
-                  (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
-                );
-                target = mine.find(
-                  (i) =>
-                    near.includes(i.reference_date.slice(0, 7)) &&
-                    Math.abs(Number(i.distributor_invoice ?? 0) - parsed.distributor_invoice!) < 0.01,
-                );
-              }
-              if (!target) {
-                skipped.push(`${label}: não tem lançamento desse mês`);
-              } else if (target.attachment_url) {
-                skipped.push(`${label}: já tinha fatura anexada`);
-              } else {
-                const path = `${client.id}/${Date.now()}-${index}.pdf`;
-                const { error: upErr } = await supabase.storage.from("faturas_v3_privado_v2").upload(path, file);
-                if (upErr) {
-                  failed.push(`${label}: PDF não subiu (${upErr.message})`);
-                } else {
-                  const { error: updErr } = await supabase.from("invoices").update({ attachment_url: path }).eq("id", target.id);
-                  if (updErr) {
-                    await supabase.storage.from("faturas_v3_privado_v2").remove([path]);
-                    failed.push(`${label}: ${updErr.message}`);
-                  } else {
-                    target.attachment_url = path;
-                    ok.push(label);
-                  }
-                }
-              }
-            }
-          }
-        } catch (err: any) {
-          failed.push(`${file.name}: não consegui ler (${err?.message ?? "erro"})`);
-        }
-        setAttachProgress({ done: index + 1, total: pdfs.length });
-      }
-    } catch (err: any) {
-      failed.push(err?.message ?? "erro desconhecido");
-    } finally {
-      setAttachRunning(false);
-      setAttachProgress(null);
-      setAttachReport({ ok, skipped, failed });
-      qc.invalidateQueries({ queryKey: ["faturas-page"] });
-      if (ok.length) toast.success(`${ok.length} fatura${ok.length === 1 ? "" : "s"} anexada${ok.length === 1 ? "" : "s"}.`);
-    }
   }
 
   /** Para quem vai a fatura lida e se dá para lançar — mostrado na conferência. */
@@ -1289,52 +1183,6 @@ function FaturasPage() {
           </Button>
         </div>
         {uploadInvoiceResult && <p className="text-sm text-muted-foreground">{uploadInvoiceResult}</p>}
-        <div className="border-t border-border pt-3 space-y-2">
-          <h3 className="text-sm font-semibold text-foreground">Anexar faturas antigas</h3>
-          <p className="text-xs text-muted-foreground">Selecione vários PDFs de uma vez — cada um vai para o lançamento do cliente e mês certos.</p>
-          <Button variant="outline" type="button" className="gap-2" disabled={attachRunning} asChild>
-            <label className="cursor-pointer">
-              {attachRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-              {attachRunning && attachProgress ? `Anexando ${attachProgress.done}/${attachProgress.total}…` : "Selecionar PDFs"}
-              <input
-                type="file"
-                accept="application/pdf"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const list = Array.from(e.target.files ?? []);
-                  e.target.value = "";
-                  if (list.length) void attachOldInvoices(list);
-                }}
-              />
-            </label>
-          </Button>
-          {attachReport && (
-            <div className="space-y-2 text-sm">
-              <p className="font-semibold text-foreground">
-                Anexadas: {attachReport.ok.length} · Ignoradas: {attachReport.skipped.length} · Com erro: {attachReport.failed.length}
-              </p>
-              {attachReport.ok.length > 0 && (
-                <details>
-                  <summary className="cursor-pointer text-muted-foreground">Ver anexadas</summary>
-                  <ul className="mt-1 list-disc pl-5 text-muted-foreground">{attachReport.ok.map((t) => <li key={t}>{t}</li>)}</ul>
-                </details>
-              )}
-              {attachReport.skipped.length > 0 && (
-                <details>
-                  <summary className="cursor-pointer text-muted-foreground">Ver ignoradas</summary>
-                  <ul className="mt-1 list-disc pl-5 text-muted-foreground">{attachReport.skipped.map((t, i) => <li key={i}>{t}</li>)}</ul>
-                </details>
-              )}
-              {attachReport.failed.length > 0 && (
-                <details open>
-                  <summary className="cursor-pointer text-destructive">Ver erros</summary>
-                  <ul className="mt-1 list-disc pl-5 text-destructive">{attachReport.failed.map((t, i) => <li key={i}>{t}</li>)}</ul>
-                </details>
-              )}
-            </div>
-          )}
-        </div>
         {importReview && (
           <ImportReviewDialog
             parsed={importReview.parsed}

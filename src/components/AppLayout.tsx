@@ -59,11 +59,42 @@ function AppShellSkeleton() {
   );
 }
 
+const ACCESS_CACHE_KEY = "usina:my-access";
+type AccessData = Awaited<ReturnType<typeof getMyAccess>>;
+
+function readCachedAccess(userId: string): AccessData | undefined {
+  try {
+    const raw = localStorage.getItem(ACCESS_CACHE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { userId: string; data: AccessData };
+    return parsed.userId === userId ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedAccess(userId: string, data: AccessData) {
+  try {
+    localStorage.setItem(ACCESS_CACHE_KEY, JSON.stringify({ userId, data }));
+  } catch {
+    /* armazenamento indisponível: segue sem cache */
+  }
+}
+
+function clearCachedAccess() {
+  try {
+    localStorage.removeItem(ACCESS_CACHE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function AppLayout({ children }: { children: ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [ready, setReady] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add("light");
@@ -177,6 +208,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
       // Libera a consulta de permissões imediatamente. A validação remota do usuário
       // continua acontecendo em paralelo, em vez de bloquear o carregamento inicial.
+      setUserId(sess.session.user.id);
       setReady(true);
 
       const { data: userData, error } = await supabase.auth.getUser();
@@ -189,9 +221,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
     })();
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT" || (!session && event !== "INITIAL_SESSION")) {
+        clearCachedAccess();
         setReady(false);
         navigate({ to: "/auth", replace: true });
       } else if (session) {
+        setUserId(session.user.id);
         setReady(true);
       }
     });
@@ -199,10 +233,19 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   const accessFn = useServerFn(getMyAccess);
+  // Permissões da última abertura: a tela abre na hora e a consulta ao servidor
+  // (~1 s) atualiza em segundo plano. Os dados continuam protegidos no banco (RLS).
+  const cachedAccess = userId ? readCachedAccess(userId) : undefined;
   const access = useQuery({
-    queryKey: ["my-access"],
-    queryFn: () => accessFn(),
-    enabled: ready,
+    queryKey: ["my-access", userId],
+    queryFn: async () => {
+      const result = await accessFn();
+      if (userId) writeCachedAccess(userId, result);
+      return result;
+    },
+    enabled: ready && Boolean(userId),
+    initialData: cachedAccess,
+    initialDataUpdatedAt: 0,
     retry: false,
     staleTime: 5 * 60_000,
     gcTime: 10 * 60_000,
@@ -229,6 +272,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }, [blocked, visibleNav.length, navigate]);
 
   async function signOut() {
+    clearCachedAccess();
     await qc.cancelQueries();
     qc.clear();
     await supabase.auth.signOut();

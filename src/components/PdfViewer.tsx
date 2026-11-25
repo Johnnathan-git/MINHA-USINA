@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+/** Carrega o pdf.js só quando um PDF é aberto (fora do pacote inicial da página). */
+async function loadPdfjs() {
+  const [lib, worker] = await Promise.all([
+    import("pdfjs-dist"),
+    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+  ]);
+  if (!lib.GlobalWorkerOptions.workerSrc) lib.GlobalWorkerOptions.workerSrc = worker.default;
+  return lib;
+}
 
 /**
  * Renderiza um PDF em canvas (PDF.js), sem depender do visualizador do
@@ -16,9 +23,11 @@ export function PdfViewer({ url }: { url: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    let doc: pdfjsLib.PDFDocumentProxy | null = null;
+    let doc: PDFDocumentProxy | null = null;
     (async () => {
       try {
+        const pdfjsLib = await loadPdfjs();
+        if (cancelled) return;
         doc = await pdfjsLib.getDocument({ url }).promise;
         if (cancelled) return;
         setPages(doc.numPages);
