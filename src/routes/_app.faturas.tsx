@@ -1600,6 +1600,56 @@ function ClientDialog({ client, open, onClose }: { client: Client | null; open: 
   );
 }
 
+/** Abre um PDF do bucket privado das faturas (via /api/public/download) num visualizador. */
+function FaturaPdfDialog({ path, title, onClose }: { path: string; title: string; onClose: () => void }) {
+  const [state, setState] = useState<{ url: string | null; error: string | null }>({ url: null, error: null });
+  useEffect(() => {
+    let url: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/public/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        url = URL.createObjectURL(await res.blob());
+        if (!cancelled) setState({ url, error: null });
+      } catch (e) {
+        if (!cancelled) setState({ url: null, error: "Não foi possível carregar o PDF. " + ((e as Error)?.message || "") });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [path]);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {state.error ? (
+          <p className="text-sm text-red-500">{state.error}</p>
+        ) : state.url ? (
+          <div className="space-y-3">
+            <PdfViewer url={state.url} />
+            <a href={state.url} download={path.split("/").pop() || "fatura.pdf"} className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline">
+              <Paperclip className="h-3.5 w-3.5" /> Baixar PDF
+            </a>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" /> Carregando fatura...
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function InvoiceDialog({
   client,
   invoice,
@@ -1774,6 +1824,7 @@ function InvoiceDialog({
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [viewPath, setViewPath] = useState<string | null>(null);
 
   /** Apaga a pendência que veio do e-mail/PDF sem lançar nada (o ícone para de pulsar). */
   async function discardPending() {
@@ -1877,6 +1928,7 @@ function InvoiceDialog({
   }
 
   return (
+    <>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
         <DialogHeader>
@@ -2015,7 +2067,10 @@ function InvoiceDialog({
             </div>
             {f.attachment_url && (
               <p className="mt-2 text-xs text-muted-foreground">
-                ✓ Anexado: {f.attachment_name || f.attachment_url.split("/").pop()}
+                ✓ Anexado: {f.attachment_name || f.attachment_url.split("/").pop()}{" "}
+                <button type="button" onClick={() => setViewPath(f.attachment_url)} className="ml-1 font-semibold text-primary hover:underline">
+                  Ver fatura
+                </button>
               </p>
             )}
           </div>
@@ -2042,6 +2097,10 @@ function InvoiceDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    {viewPath && (
+      <FaturaPdfDialog path={viewPath} title={`${client.name} — fatura anexada`} onClose={() => setViewPath(null)} />
+    )}
+    </>
   );
 }
 
