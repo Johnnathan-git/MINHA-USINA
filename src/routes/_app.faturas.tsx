@@ -715,7 +715,17 @@ function FaturasPage() {
           } else if (parsed.uc_number === GENERATING_UC) {
             skipped.push(`${file.name}: fatura da própria usina — não é de cliente`);
           } else {
-            const client = (clients ?? []).find((c) => (c.uc_number ?? "").replace(/\D/g, "") === parsed.uc_number);
+            let client = (clients ?? []).find((c) => (c.uc_number ?? "").replace(/\D/g, "") === parsed.uc_number);
+            // Faturas antigas usam o número de UC anterior à troca da Equatorial: acha pelo valor + mês.
+            if (!client && parsed.distributor_invoice) {
+              const hit = invoices.filter(
+                (i) =>
+                  !i.attachment_url &&
+                  i.reference_date.slice(0, 7) === parsed.referenceMonth &&
+                  Math.abs(Number(i.distributor_invoice ?? 0) - parsed.distributor_invoice!) < 0.01,
+              );
+              if (hit.length === 1) client = (clients ?? []).find((c) => c.id === hit[0].client_id);
+            }
             const label = client ? `${client.name} ${monthLabelFromISO(`${parsed.referenceMonth}-01`)}` : "";
             if (!client) {
               failed.push(`${file.name}: UC ${parsed.uc_number} não é de nenhum cliente`);
