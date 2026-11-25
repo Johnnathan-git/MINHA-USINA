@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History } from "lucide-react";
+import { Plus, Zap, FileText, Power, PowerOff, Settings, TrendingUp, Pencil, Trash2, Eye, ShieldAlert, Paperclip, Loader2, MessageCircle, Send, RefreshCw, Check, ChevronDown, History, Clock } from "lucide-react";
 import { CLIENT_COLORS, brl, initial, monthLabelFromISO, getClientButtonStyles, textOnColor } from "@/lib/format";
 import { buildWhatsAppMessage, DEFAULT_WHATSAPP_TEMPLATE, formatPriceKw, type TableData } from "@/lib/whatsapp";
 import { extractPdfText, parseInvoiceText, type DemaeParsed, type EquatorialParsed, type ParsedInvoicePdf } from "@/lib/parseInvoicePdf";
@@ -423,6 +423,13 @@ function FaturasPage() {
   const shown = showInactive ? inactive : active;
 
   const invCount = (id: string) => data.invoices.filter((i) => i.client_id === id).length;
+
+  // Faturas do mês escolhido no seletor (o mesmo do fechamento) já lançadas, por cliente ativo.
+  const launchedInMonth = new Set(
+    data.invoices.filter((i) => i.reference_date.slice(0, 7) === waMonth).map((i) => i.client_id),
+  );
+  const missingInMonth = active.filter((c) => !launchedInMonth.has(c.id));
+  const monthShort = monthLabelFromISO(`${waMonth}-01`);
 
   // Uma pendência por cliente (a mais antiga, se houver mais de uma).
   const pendingByClient = new Map<string, PendingImport>();
@@ -985,6 +992,25 @@ function FaturasPage() {
             </Button>
           </div>
         </div>
+        {active.length > 0 && (
+          <div
+            className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-sm ${
+              missingInMonth.length === 0
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-700"
+            }`}
+          >
+            {missingInMonth.length === 0 ? <Check className="h-4 w-4 shrink-0" /> : <Clock className="h-4 w-4 shrink-0" />}
+            <span className="font-bold">
+              Faturas de {monthShort}: {active.length - missingInMonth.length} de {active.length} lançadas
+            </span>
+            <span>
+              {missingInMonth.length === 0
+                ? "— todas cadastradas, pode enviar o fechamento."
+                : `— faltam: ${missingInMonth.map((c) => c.name).join(", ")}`}
+            </span>
+          </div>
+        )}
         {waPreview !== null && waPreview.length > 0 ? (
           <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1263,6 +1289,16 @@ function FaturasPage() {
                   <Paperclip className="h-3 w-3" /> Anexos
                 </span>
               )}
+              {c.active &&
+                (launchedInMonth.has(c.id) ? (
+                  <span className="flex items-center gap-1 text-emerald-600">
+                    <Check className="h-3 w-3" /> {monthShort} lançada
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <Clock className="h-3 w-3" /> {monthShort} falta
+                  </span>
+                ))}
               {waStatusByClient.get(c.id) === "sent" ? (
                 <span className="flex items-center gap-1 text-emerald-600">
                   <Check className="h-3 w-3" /> WhatsApp enviado
