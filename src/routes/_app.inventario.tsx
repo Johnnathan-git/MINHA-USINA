@@ -106,6 +106,7 @@ function Inventario() {
   const [category, setCategory] = useState<string>("all");
   const [docOpen, setDocOpen] = useState(false);
   const [docView, setDocView] = useState<PlantDoc | null>(null);
+  const [bulkUploading, setBulkUploading] = useState<{ done: number; total: number } | null>(null);
 
   const totalAtivos = data.assets.reduce((s, a) => s + Number(a.unit_value) * a.quantity, 0);
   const totalGastos = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
@@ -257,6 +258,26 @@ function Inventario() {
 
         <TabsContent value="docs" className="mt-4">
           <Card className="glass-card p-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Notas fiscais, contratos, garantias e outros documentos da usina.</p>
+              <Button variant="outline" type="button" className="gap-2 border-border" disabled={bulkUploading !== null} asChild>
+                <label className="cursor-pointer">
+                  {bulkUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                  {bulkUploading ? `Enviando ${bulkUploading.done}/${bulkUploading.total}…` : "Anexar vários arquivos"}
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const list = Array.from(e.target.files ?? []);
+                      e.target.value = "";
+                      if (list.length) void uploadManyDocs(list, setBulkUploading, refresh);
+                    }}
+                  />
+                </label>
+              </Button>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -462,6 +483,48 @@ function InvExpenseDialog({ expense, onClose, onSaved }: { expense: InvExpense |
     </Dialog>
   );
 }
+/** Sobe vários documentos de uma vez: nome = nome do arquivo (dá para renomear depois). */
+async function uploadManyDocs(
+  files: File[],
+  setProgress: (v: { done: number; total: number } | null) => void,
+  onDone: () => void,
+) {
+  let ok = 0;
+  const failed: string[] = [];
+  setProgress({ done: 0, total: files.length });
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    try {
+      if (file.size > DOC_MAX_BYTES) throw new Error("maior que 20 MB");
+      const ext = (file.name.match(/\.([A-Za-z0-9]+)$/)?.[1] ?? "pdf").toLowerCase();
+      const path = `documentos/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const up = await supabase.storage.from(DOC_BUCKET).upload(path, file, { contentType: file.type || undefined });
+      if (up.error) throw new Error(up.error.message);
+      const title = file.name.replace(/\.[^.]+$/, "").replace(/^\u200e/, "").trim() || file.name;
+      const { error } = await supabase.from("plant_documents").insert({
+        title,
+        doc_type: /^(nf|nota|danfe)|\d{40,}/i.test(title) ? "Nota fiscal" : "Outro",
+        file_path: path,
+        file_name: file.name,
+        file_size: file.size,
+        content_type: file.type || null,
+      });
+      if (error) {
+        await supabase.storage.from(DOC_BUCKET).remove([path]);
+        throw new Error(error.message);
+      }
+      ok++;
+    } catch (e) {
+      failed.push(`${file.name} (${(e as Error)?.message || "erro"})`);
+    }
+    setProgress({ done: i + 1, total: files.length });
+  }
+  setProgress(null);
+  onDone();
+  if (ok) toast.success(`${ok} documento${ok === 1 ? "" : "s"} anexado${ok === 1 ? "" : "s"}.`);
+  if (failed.length) toast.error(`Não subiram: ${failed.join("; ")}`);
+}
+
 async function deleteDoc(d: PlantDoc, onDone: () => void) {
   if (!confirm(`Excluir o documento "${d.title}"? O arquivo também será apagado.`)) return;
   const { error } = await supabase.from("plant_documents").delete().eq("id", d.id);
