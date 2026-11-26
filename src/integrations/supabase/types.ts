@@ -461,6 +461,45 @@ export type Database = {
           },
         ]
       }
+      plant_documents: {
+        Row: {
+          content_type: string | null
+          created_at: string
+          doc_date: string | null
+          doc_type: string
+          file_name: string | null
+          file_path: string
+          file_size: number | null
+          id: string
+          notes: string | null
+          title: string
+        }
+        Insert: {
+          content_type?: string | null
+          created_at?: string
+          doc_date?: string | null
+          doc_type?: string
+          file_name?: string | null
+          file_path: string
+          file_size?: number | null
+          id?: string
+          notes?: string | null
+          title: string
+        }
+        Update: {
+          content_type?: string | null
+          created_at?: string
+          doc_date?: string | null
+          doc_type?: string
+          file_name?: string | null
+          file_path?: string
+          file_size?: number | null
+          id?: string
+          notes?: string | null
+          title?: string
+        }
+        Relationships: []
+      }
       plant_config: {
         Row: {
           id: number

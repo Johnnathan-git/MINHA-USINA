@@ -10,9 +10,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Pencil, Trash2, Box, TrendingUp, Hammer, Package } from "lucide-react";
+import { Plus, Pencil, Trash2, Box, TrendingUp, Hammer, Package, FileText, Eye, Loader2, Paperclip } from "lucide-react";
+import { PdfViewer } from "@/components/PdfViewer";
+import { fetchInvoicePdf } from "@/lib/invoicePdf";
 import { brl, formatDateBR } from "@/lib/format";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type Asset = {
@@ -25,23 +27,49 @@ type InvExpense = {
   responsible: string | null;
 };
 
+type PlantDoc = {
+  id: string; title: string; doc_type: string; doc_date: string | null; notes: string | null;
+  file_path: string; file_name: string | null; file_size: number | null; content_type: string | null;
+  created_at: string;
+};
+
+const DOC_TYPES = ["Nota fiscal", "Contrato", "Garantia", "Projeto / ART", "Outro"];
+const DOC_BUCKET = "faturas_v3_privado_v2";
+const DOC_MAX_BYTES = 20 * 1024 * 1024;
+
+function formatSize(bytes: number | null): string {
+  if (!bytes) return "—";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+}
+
 const BASE_CATEGORIES = ["Placa Solar", "Inversor", "Equipamentos Elétricos"];
 const RESPONSIBLES = ["John", "Jehn"];
 
 const q = queryOptions({
   queryKey: ["inventario-page"],
   queryFn: async () => {
-    const [a, e] = await Promise.all([
+    const [a, e, d] = await Promise.all([
       supabase.from("inventory_assets").select("*").order("created_at", { ascending: false }),
       supabase
         .from("investment_expenses")
         .select("*")
         .order("spent_on", { ascending: false })
         .order("created_at", { ascending: true }),
+      supabase
+        .from("plant_documents")
+        .select("*")
+        .order("doc_date", { ascending: false, nullsFirst: false })
+        .order("created_at", { ascending: false }),
     ]);
     if (a.error) throw a.error;
     if (e.error) throw e.error;
-    return { assets: (a.data ?? []) as Asset[], expenses: (e.data ?? []) as InvExpense[] };
+    return {
+      assets: (a.data ?? []) as Asset[],
+      expenses: (e.data ?? []) as InvExpense[],
+      // Sem a tabela (migration não aplicada) a aba fica vazia em vez de quebrar a página.
+      docs: (d.error ? [] : (d.data ?? [])) as PlantDoc[],
+    };
   },
 });
 
@@ -76,6 +104,8 @@ function Inventario() {
   const [assetOpen, setAssetOpen] = useState<Asset | true | null>(null);
   const [expenseOpen, setExpenseOpen] = useState<InvExpense | true | null>(null);
   const [category, setCategory] = useState<string>("all");
+  const [docOpen, setDocOpen] = useState(false);
+  const [docView, setDocView] = useState<PlantDoc | null>(null);
 
   const totalAtivos = data.assets.reduce((s, a) => s + Number(a.unit_value) * a.quantity, 0);
   const totalGastos = data.expenses.reduce((s, e) => s + Number(e.amount), 0);
@@ -98,7 +128,9 @@ function Inventario() {
         </div>
         {tab === "assets"
           ? <Button onClick={() => setAssetOpen(true)} className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 sm:w-auto"><Plus className="h-4 w-4" /> Novo Item</Button>
-          : <Button onClick={() => setExpenseOpen(true)} className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 sm:w-auto"><Plus className="h-4 w-4" /> Novo Gasto</Button>
+          : tab === "docs"
+            ? <Button onClick={() => setDocOpen(true)} className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 sm:w-auto"><Plus className="h-4 w-4" /> Novo Documento</Button>
+            : <Button onClick={() => setExpenseOpen(true)} className="w-full gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 sm:w-auto"><Plus className="h-4 w-4" /> Novo Gasto</Button>
         }
       </div>
 
@@ -122,6 +154,7 @@ function Inventario() {
         <TabsList className="w-full justify-start overflow-x-auto bg-accent p-1 rounded-lg border border-border">
           <TabsTrigger value="assets" className="gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground font-bold text-muted-foreground"><Package className="h-4 w-4" /> Ativos / Equipamentos</TabsTrigger>
           <TabsTrigger value="expenses" className="gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground font-bold text-muted-foreground"><Hammer className="h-4 w-4" /> Gastos de Investimento</TabsTrigger>
+          <TabsTrigger value="docs" className="gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground font-bold text-muted-foreground"><FileText className="h-4 w-4" /> Documentos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="assets" className="mt-4">
@@ -221,8 +254,46 @@ function Inventario() {
             {data.expenses.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Nenhum gasto lançado.</p>}
           </Card>
         </TabsContent>
+
+        <TabsContent value="docs" className="mt-4">
+          <Card className="glass-card p-6">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="pb-3 text-left font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Documento</th>
+                    <th className="pb-3 text-left font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Tipo</th>
+                    <th className="pb-3 text-left font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Data</th>
+                    <th className="pb-3 text-right font-bold text-muted-foreground uppercase text-[10px] tracking-wider">Tamanho</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.docs.map(d => (
+                    <tr key={d.id} className="border-b border-border last:border-0 hover:bg-accent transition-colors zebra-stripe">
+                      <td className="py-4">
+                        <button onClick={() => setDocView(d)} className="text-left font-bold text-foreground hover:text-primary transition-colors">{d.title}</button>
+                        {d.notes && <div className="text-[11px] text-muted-foreground italic">{d.notes}</div>}
+                      </td>
+                      <td className="py-4"><span className="rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">{d.doc_type}</span></td>
+                      <td className="py-4 text-muted-foreground font-medium num">{d.doc_date ? formatDateBR(d.doc_date) : "—"}</td>
+                      <td className="py-4 text-right text-muted-foreground font-medium num">{formatSize(d.file_size)}</td>
+                      <td className="py-4 pl-4 text-right whitespace-nowrap">
+                        <button onClick={() => setDocView(d)} className="mr-3 text-muted-foreground hover:text-foreground transition-colors" title="Ver documento"><Eye className="h-4 w-4" /></button>
+                        <button onClick={() => deleteDoc(d, refresh)} className="text-muted-foreground hover:text-red-400 transition-colors" title="Excluir"><Trash2 className="h-4 w-4" /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {data.docs.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Nenhum documento anexado. Use "Novo Documento" para guardar notas fiscais, contratos e garantias.</p>}
+          </Card>
+        </TabsContent>
       </Tabs>
 
+      {docOpen && <DocDialog onClose={() => setDocOpen(false)} onSaved={refresh} />}
+      {docView && <DocViewer doc={docView} onClose={() => setDocView(null)} />}
       {assetOpen && <AssetDialog asset={assetOpen === true ? null : assetOpen} onClose={() => setAssetOpen(null)} onSaved={refresh} />}
       {expenseOpen && <InvExpenseDialog expense={expenseOpen === true ? null : expenseOpen} onClose={() => setExpenseOpen(null)} onSaved={refresh} />}
     </div>
@@ -387,6 +458,152 @@ function InvExpenseDialog({ expense, onClose, onSaved }: { expense: InvExpense |
           <Button variant="outline" onClick={onClose} className="border-border text-muted-foreground hover:text-foreground hover:bg-accent">Cancelar</Button>
           <Button onClick={submit} disabled={saving} className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold">{expense ? "Salvar" : "Cadastrar"}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+async function deleteDoc(d: PlantDoc, onDone: () => void) {
+  if (!confirm(`Excluir o documento "${d.title}"? O arquivo também será apagado.`)) return;
+  const { error } = await supabase.from("plant_documents").delete().eq("id", d.id);
+  if (error) return toast.error(error.message);
+  await supabase.storage.from(DOC_BUCKET).remove([d.file_path]);
+  toast.success("Documento excluído");
+  onDone();
+}
+
+function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [f, setF] = useState({ title: "", doc_type: "Nota fiscal", doc_date: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+
+  function pickFile(next: File | null) {
+    if (next && next.size > DOC_MAX_BYTES) {
+      toast.error("Arquivo muito grande (máximo 20 MB).");
+      return;
+    }
+    setFile(next);
+    if (next && !f.title.trim()) setF((v) => ({ ...v, title: next.name.replace(/\.[^.]+$/, "") }));
+  }
+
+  async function submit() {
+    if (!file) return toast.error("Escolha o arquivo");
+    if (!f.title.trim()) return toast.error("Informe o nome do documento");
+    setSaving(true);
+    const ext = (file.name.match(/\.([A-Za-z0-9]+)$/)?.[1] ?? "pdf").toLowerCase();
+    const path = `documentos/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    const up = await supabase.storage.from(DOC_BUCKET).upload(path, file, { contentType: file.type || undefined });
+    if (up.error) {
+      setSaving(false);
+      return toast.error(`Arquivo não subiu: ${up.error.message}`);
+    }
+    const { error } = await supabase.from("plant_documents").insert({
+      title: f.title.trim(),
+      doc_type: f.doc_type,
+      doc_date: f.doc_date || null,
+      notes: f.notes.trim() || null,
+      file_path: path,
+      file_name: file.name,
+      file_size: file.size,
+      content_type: file.type || null,
+    });
+    setSaving(false);
+    if (error) {
+      await supabase.storage.from(DOC_BUCKET).remove([path]);
+      return toast.error(error.message);
+    }
+    toast.success("Documento salvo");
+    onSaved();
+    onClose();
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogHeader><DialogTitle className="text-foreground text-glow">Novo Documento</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label className="text-muted-foreground">Arquivo (PDF ou foto) *</Label>
+            <Button variant="outline" type="button" className="mt-1 w-full justify-start gap-2 border-border" asChild>
+              <label className="cursor-pointer">
+                <Paperclip className="h-4 w-4" />
+                <span className="truncate">{file ? `${file.name} (${formatSize(file.size)})` : "Selecionar arquivo"}</span>
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  className="hidden"
+                  onChange={(e) => { pickFile(e.target.files?.[0] ?? null); e.target.value = ""; }}
+                />
+              </label>
+            </Button>
+          </div>
+          <div className="sm:col-span-2">
+            <Label className="text-muted-foreground">Nome do documento *</Label>
+            <Input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="Ex.: NF compra de 20 placas" className="bg-accent border-border text-foreground" />
+          </div>
+          <div>
+            <Label className="text-muted-foreground">Tipo</Label>
+            <select
+              className="flex h-9 w-full rounded-md border border-border bg-accent px-3 py-1 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-primary/50"
+              value={f.doc_type}
+              onChange={e => setF({ ...f, doc_type: e.target.value })}
+            >
+              {DOC_TYPES.map(t => <option key={t} value={t} className="bg-popover text-foreground">{t}</option>)}
+            </select>
+          </div>
+          <div><Label className="text-muted-foreground">Data do documento</Label><Input type="date" value={f.doc_date} onChange={e => setF({ ...f, doc_date: e.target.value })} className="bg-accent border-border text-foreground" /></div>
+          <div className="sm:col-span-2"><Label className="text-muted-foreground">Observações</Label><Textarea value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} placeholder="Opcional" className="bg-accent border-border text-foreground" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} className="border-border text-muted-foreground hover:text-foreground hover:bg-accent">Cancelar</Button>
+          <Button onClick={submit} disabled={saving} className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90 font-bold">
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DocViewer({ doc, onClose }: { doc: PlantDoc; onClose: () => void }) {
+  const [state, setState] = useState<{ url: string | null; type: string; error: string | null }>({ url: null, type: "", error: null });
+  useEffect(() => {
+    let url: string | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const blob = await fetchInvoicePdf(doc.file_path, { name: doc.file_name ?? undefined });
+        url = URL.createObjectURL(blob);
+        if (!cancelled) setState({ url, type: doc.content_type || blob.type, error: null });
+      } catch (e) {
+        if (!cancelled) setState({ url: null, type: "", error: "Não foi possível abrir o documento. " + ((e as Error)?.message || "") });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [doc]);
+  const isImage = state.type.startsWith("image/");
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
+        <DialogHeader><DialogTitle>{doc.title}</DialogTitle></DialogHeader>
+        {state.error ? (
+          <p className="text-sm text-red-500">{state.error}</p>
+        ) : state.url ? (
+          <div className="space-y-3">
+            {isImage
+              ? <img src={state.url} alt={doc.title} className="max-h-[70vh] w-full rounded border border-border object-contain bg-white" />
+              : <PdfViewer url={state.url} />}
+            <a href={state.url} download={doc.file_name || "documento"} className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline">
+              <Paperclip className="h-3.5 w-3.5" /> Baixar arquivo
+            </a>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" /> Carregando documento...
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
