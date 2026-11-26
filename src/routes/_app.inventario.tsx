@@ -104,7 +104,7 @@ function Inventario() {
   const [assetOpen, setAssetOpen] = useState<Asset | true | null>(null);
   const [expenseOpen, setExpenseOpen] = useState<InvExpense | true | null>(null);
   const [category, setCategory] = useState<string>("all");
-  const [docOpen, setDocOpen] = useState(false);
+  const [docOpen, setDocOpen] = useState<PlantDoc | true | null>(null);
   const [docView, setDocView] = useState<PlantDoc | null>(null);
   const [bulkUploading, setBulkUploading] = useState<{ done: number; total: number } | null>(null);
 
@@ -301,6 +301,7 @@ function Inventario() {
                       <td className="py-4 text-right text-muted-foreground font-medium num">{formatSize(d.file_size)}</td>
                       <td className="py-4 pl-4 text-right whitespace-nowrap">
                         <button onClick={() => setDocView(d)} className="mr-3 text-muted-foreground hover:text-foreground transition-colors" title="Ver documento"><Eye className="h-4 w-4" /></button>
+                        <button onClick={() => setDocOpen(d)} className="mr-3 text-muted-foreground hover:text-foreground transition-colors" title="Editar"><Pencil className="h-4 w-4" /></button>
                         <button onClick={() => deleteDoc(d, refresh)} className="text-muted-foreground hover:text-red-400 transition-colors" title="Excluir"><Trash2 className="h-4 w-4" /></button>
                       </td>
                     </tr>
@@ -313,7 +314,7 @@ function Inventario() {
         </TabsContent>
       </Tabs>
 
-      {docOpen && <DocDialog onClose={() => setDocOpen(false)} onSaved={refresh} />}
+      {docOpen && <DocDialog doc={docOpen === true ? null : docOpen} onClose={() => setDocOpen(null)} onSaved={refresh} />}
       {docView && <DocViewer doc={docView} onClose={() => setDocView(null)} />}
       {assetOpen && <AssetDialog asset={assetOpen === true ? null : assetOpen} onClose={() => setAssetOpen(null)} onSaved={refresh} />}
       {expenseOpen && <InvExpenseDialog expense={expenseOpen === true ? null : expenseOpen} onClose={() => setExpenseOpen(null)} onSaved={refresh} />}
@@ -534,9 +535,14 @@ async function deleteDoc(d: PlantDoc, onDone: () => void) {
   onDone();
 }
 
-function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function DocDialog({ doc, onClose, onSaved }: { doc: PlantDoc | null; onClose: () => void; onSaved: () => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [f, setF] = useState({ title: "", doc_type: "Nota fiscal", doc_date: "", notes: "" });
+  const [f, setF] = useState({
+    title: doc?.title ?? "",
+    doc_type: doc?.doc_type ?? "Nota fiscal",
+    doc_date: doc?.doc_date ?? "",
+    notes: doc?.notes ?? "",
+  });
   const [saving, setSaving] = useState(false);
 
   function pickFile(next: File | null) {
@@ -549,8 +555,22 @@ function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   }
 
   async function submit() {
-    if (!file) return toast.error("Escolha o arquivo");
     if (!f.title.trim()) return toast.error("Informe o nome do documento");
+    // Edição: troca só nome, tipo, data e observações (o arquivo continua o mesmo).
+    if (doc) {
+      setSaving(true);
+      const { error } = await supabase
+        .from("plant_documents")
+        .update({ title: f.title.trim(), doc_type: f.doc_type, doc_date: f.doc_date || null, notes: f.notes.trim() || null })
+        .eq("id", doc.id);
+      setSaving(false);
+      if (error) return toast.error(error.message);
+      toast.success("Documento atualizado");
+      onSaved();
+      onClose();
+      return;
+    }
+    if (!file) return toast.error("Escolha o arquivo");
     setSaving(true);
     const ext = (file.name.match(/\.([A-Za-z0-9]+)$/)?.[1] ?? "pdf").toLowerCase();
     const path = `documentos/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
@@ -582,8 +602,13 @@ function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="glass-card border-border text-foreground max-h-[90vh] max-w-lg overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-foreground text-glow">Novo Documento</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="text-foreground text-glow">{doc ? "Editar Documento" : "Novo Documento"}</DialogTitle></DialogHeader>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {doc ? (
+            <div className="sm:col-span-2 text-xs text-muted-foreground">
+              Arquivo: <span className="font-semibold text-foreground">{doc.file_name || "—"}</span> ({formatSize(doc.file_size)})
+            </div>
+          ) : (
           <div className="sm:col-span-2">
             <Label className="text-muted-foreground">Arquivo (PDF ou foto) *</Label>
             <Button variant="outline" type="button" className="mt-1 w-full justify-start gap-2 border-border" asChild>
@@ -599,6 +624,7 @@ function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
               </label>
             </Button>
           </div>
+          )}
           <div className="sm:col-span-2">
             <Label className="text-muted-foreground">Nome do documento *</Label>
             <Input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="Ex.: NF compra de 20 placas" className="bg-accent border-border text-foreground" />
@@ -610,7 +636,7 @@ function DocDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
               value={f.doc_type}
               onChange={e => setF({ ...f, doc_type: e.target.value })}
             >
-              {DOC_TYPES.map(t => <option key={t} value={t} className="bg-popover text-foreground">{t}</option>)}
+              {[...new Set([...DOC_TYPES, f.doc_type])].map(t => <option key={t} value={t} className="bg-popover text-foreground">{t}</option>)}
             </select>
           </div>
           <div><Label className="text-muted-foreground">Data do documento</Label><Input type="date" value={f.doc_date} onChange={e => setF({ ...f, doc_date: e.target.value })} className="bg-accent border-border text-foreground" /></div>
