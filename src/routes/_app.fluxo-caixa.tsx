@@ -30,6 +30,7 @@ import {
   Landmark,
   History,
   Search,
+  Paperclip,
 } from "lucide-react";
 import { brl, monthLabel, EXPENSE_CATEGORIES, initial } from "@/lib/format";
 import { Suspense, useEffect, useMemo, useState } from "react";
@@ -1218,6 +1219,8 @@ function ExpenseDialog({
   const [parcels, setParcels] = useState("2");
   const [mode, setMode] = useState<"parcela" | "total">("parcela");
   const [saving, setSaving] = useState(false);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [localCategories, setLocalCategories] = useState(categories);
@@ -1264,6 +1267,17 @@ function ExpenseDialog({
     toast.success("Categoria adicionada");
   }
 
+  /** Sobe o boleto no bucket de faturas (mesmo caminho do anexo de faturas). */
+  async function uploadAttachmentFile(file: File): Promise<string | null> {
+    const path = `expenses/${Date.now()}.pdf`;
+    const { error } = await supabase.storage.from("faturas_v3_privado_v2").upload(path, file);
+    if (error) {
+      toast.error(`Boleto não subiu: ${error.message}`);
+      return null;
+    }
+    return path;
+  }
+
   async function submit() {
     if (!f.description.trim() || !f.amount) {
       toast.error("Preencha descrição e valor");
@@ -1272,12 +1286,23 @@ function ExpenseDialog({
     setSaving(true);
     const previousStatus = expense ? expensePaymentStatus(expense.notes) : null;
     const previousAmount = expense ? Number(expense.amount) : 0;
+    let attachmentPath: string | null = null;
+    if (attachmentFile) {
+      setAttachmentUploading(true);
+      attachmentPath = await uploadAttachmentFile(attachmentFile);
+      setAttachmentUploading(false);
+      if (!attachmentPath) {
+        setSaving(false);
+        return;
+      }
+    }
     const payload = {
       reference_date: f.reference_date,
       category: f.category,
       description: f.description.trim(),
       amount: Number(f.amount),
       notes: withExpensePaymentTag(f.notes, f.payment_status),
+      ...(attachmentPath ? { attachment_path: attachmentPath } : {}),
     };
     // Atualização otimista: a lista mostra o novo status na hora, sem esperar o banco.
     if (expense) {
@@ -1287,7 +1312,7 @@ function ExpenseDialog({
               ...old,
               expenses: old.expenses.map((row: any) =>
                 row.id === expense.id
-                  ? { ...row, reference_date: payload.reference_date, category: payload.category, description: payload.description, amount: payload.amount, notes: payload.notes }
+                  ? { ...row, reference_date: payload.reference_date, category: payload.category, description: payload.description, amount: payload.amount, notes: payload.notes, ...(attachmentPath ? { attachment_path: attachmentPath } : {}) }
                   : row,
               ),
             }
@@ -1514,6 +1539,35 @@ function ExpenseDialog({
               onChange={(e) => setF({ ...f, notes: e.target.value })}
               placeholder="Opcional"
             />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Boleto (PDF)</Label>
+            {expense?.attachment_path && !attachmentFile ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Boleto atual: {expense.attachment_path.split("/").pop()}
+              </p>
+            ) : null}
+            <div className="mt-2">
+              <Button variant="outline" type="button" className="gap-2 relative" disabled={attachmentUploading} asChild>
+                <label className="cursor-pointer">
+                  <Paperclip className="h-4 w-4" />
+                  {attachmentUploading ? "Subindo…" : attachmentFile ? attachmentFile.name : expense?.attachment_path ? "Trocar boleto" : "Anexar boleto"}
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setAttachmentFile(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </Button>
+            </div>
+            {attachmentFile ? (
+              <p className="mt-1 text-xs text-muted-foreground">Novo boleto: {attachmentFile.name} — será salvo ao confirmar.</p>
+            ) : null}
           </div>
         </div>
         <DialogFooter className="flex-col gap-2 sm:flex-row">
