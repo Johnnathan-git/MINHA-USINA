@@ -137,6 +137,9 @@ type WhatsAppPreview = {
   message_text: string;
   table_data: TableData;
   attachment_path: string | null;
+  /** Linha já existente na fila (enviada ou falhou): o confirmar volta ela para pendente em vez de inserir outra — o banco só aceita uma linha ativa por cliente/mês. */
+  queueId?: string | null;
+  queueStatus?: "sent" | "failed" | null;
 };
 
 /** Despesa da usina (tabela expenses): só "Fatura Usina" com boleto vai ao grupo. */
@@ -834,15 +837,21 @@ function FaturasPage() {
         .gte("reference_date", start)
         .lt("reference_date", end);
       if (error) throw new Error(error.message);
-      const already = new Set(
-        (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth).map((w) => w.client_id),
-      );
+      const queued = new Map<string, WhatsAppQueue>();
+      for (const w of data.whatsapp ?? []) {
+        if (w.reference_month !== waMonth) continue;
+        if (!queued.has(w.client_id)) queued.set(w.client_id, w); // a lista vem por created_at desc: fica a mais recente
+      }
       const rows: WhatsAppPreview[] = [];
       const skipped: string[] = [];
       for (const inv of invs ?? []) {
         const c = data.clients.find((x) => x.id === inv.client_id);
         if (!c || !c.active) continue;
-        if (already.has(c.id)) { skipped.push(c.name); continue; }
+        const q = queued.get(c.id);
+        // Na fila (pendente): continua bloqueado para não mandar duas vezes.
+        // Já enviado ou falhou: entra na prévia como reenvio, desmarcado por
+        // padrão — só vai se ele marcar.
+        if (q && q.status === "pending") { skipped.push(c.name); continue; }
         // Telefone não é obrigatório: no modo grupo o remetente envia para
         // o grupo e ignora o telefone; a coluna aceita string vazia.
         const phone = (c.phone ?? "").trim();
@@ -851,6 +860,8 @@ function FaturasPage() {
           client_name: c.name,
           phone,
           reference_month: waMonth,
+          queueId: q?.id ?? null,
+          queueStatus: q?.status === "sent" ? "sent" : q?.status === "failed" ? "failed" : null,
           message_text: buildWhatsAppMessage({
             clientName: c.name,
             referenceMonth: waMonth,
@@ -879,7 +890,8 @@ function FaturasPage() {
       }
       if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
       setWaPreview(rows);
-      setWaSelected(new Set(rows.map((r) => r.client_id)));
+      // Reenvio começa desmarcado: nada já enviado vai de novo sem ele marcar.
+      setWaSelected(new Set(rows.filter((r) => !r.queueId).map((r) => r.client_id)));
     } catch (e) {
       toast.error((e as Error)?.message || "Erro ao preparar mensagens");
     } finally {
@@ -897,19 +909,40 @@ function FaturasPage() {
     }
     setWaConfirming(true);
     try {
-      const { error: insError } = await supabase.from("whatsapp_queue").insert(
-        selected.map((p) => ({
-          client_id: p.client_id,
-          client_name: p.client_name,
-          phone: p.phone,
-          reference_month: p.reference_month,
-          message_text: p.message_text,
-          status: "pending",
-          table_data: p.table_data,
-          attachment_path: p.attachment_path,
-        })),
-      );
-      if (insError) throw new Error(insError.message);
+      const fresh = selected.filter((p) => !p.queueId);
+      const resends = selected.filter((p) => p.queueId);
+      if (fresh.length > 0) {
+        const { error: insError } = await supabase.from("whatsapp_queue").insert(
+          fresh.map((p) => ({
+            client_id: p.client_id,
+            client_name: p.client_name,
+            phone: p.phone,
+            reference_month: p.reference_month,
+            message_text: p.message_text,
+            status: "pending",
+            table_data: p.table_data,
+            attachment_path: p.attachment_path,
+          })),
+        );
+        if (insError) throw new Error(insError.message);
+      }
+      // Reenvio: volta a linha existente para pendente com o texto e a tabela
+      // atuais (o banco não aceita duas linhas ativas do mesmo cliente/mês).
+      for (const p of resends) {
+        const { error: updError } = await supabase
+          .from("whatsapp_queue")
+          .update({
+            status: "pending",
+            error: null,
+            sent_at: null,
+            phone: p.phone,
+            message_text: p.message_text,
+            table_data: p.table_data,
+            attachment_path: p.attachment_path,
+          })
+          .eq("id", p.queueId);
+        if (updError) throw new Error(updError.message);
+      }
       toast.success(`${selected.length} mensagem(ns) na fila para envio.`);
       setWaPreview(null);
       qc.invalidateQueries({ queryKey: ["faturas-page"] });
@@ -1165,7 +1198,12 @@ function FaturasPage() {
                       });
                     }}
                   />
-                  Enviar — {p.client_name}
+                  {p.queueStatus ? `Reenviar — ${p.client_name}` : `Enviar — ${p.client_name}`}
+                  {p.queueStatus ? (
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-bold text-amber-600">
+                      {p.queueStatus === "sent" ? "Já enviado" : "Falhou"}
+                    </span>
+                  ) : null}
                 </label>
                 <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
