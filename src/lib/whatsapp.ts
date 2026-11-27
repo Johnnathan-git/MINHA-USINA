@@ -1,4 +1,4 @@
-import { brl, formatDateBR, monthLabelLong, parseISODateLocal } from "./format";
+import { brl, formatDateBR, monthNameLong, parseISODateLocal } from "./format";
 
 /**
  * Texto da mensagem de fechamento mensal enviada no WhatsApp, com a tabela
@@ -41,7 +41,7 @@ export function buildWhatsAppMessage(args: {
   template?: string | null; // modelo salvo em plant_config; vazio = padrão
 }): string {
   const template = (args.template ?? "").trim() || DEFAULT_WHATSAPP_TEMPLATE;
-  const month = monthLabelLong(parseISODateLocal(`${args.referenceMonth}-01`)).toLowerCase();
+  const month = monthNameLong(parseISODateLocal(`${args.referenceMonth}-01`)).toLowerCase();
   const value = brl(args.clientPays);
   // {vencimento} já traz a frase inteira (" com vencimento dia 17/11/2026")
   // ou some quando não há vencimento; {chave_pix} é a chave em monospace.

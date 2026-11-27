@@ -14,6 +14,13 @@ export const monthLabelLong = (d: Date) => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+// Nome do mês por extenso, sem o ano (ex.: "Outubro") — é o que o
+// placeholder {mes} da mensagem de WhatsApp usa.
+export const monthNameLong = (d: Date) => {
+  const s = d.toLocaleString("pt-BR", { month: "long" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
 // Parses "yyyy-mm-dd" as a LOCAL date (avoids UTC shifting to previous month)
 export const parseISODateLocal = (iso: string) => {
   const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
