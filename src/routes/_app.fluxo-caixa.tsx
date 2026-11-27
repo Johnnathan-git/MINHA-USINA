@@ -30,8 +30,13 @@ import {
   Landmark,
   History,
   Search,
+  FileText,
+  Loader2,
+  Send,
 } from "lucide-react";
-import { brl, monthLabel, EXPENSE_CATEGORIES, initial } from "@/lib/format";
+import { brl, monthLabel, monthLabelFromISO, EXPENSE_CATEGORIES, initial } from "@/lib/format";
+import { PdfViewer } from "@/components/PdfViewer";
+import { fetchInvoicePdf } from "@/lib/invoicePdf";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -316,6 +321,8 @@ function Fluxo() {
   const [invoiceStatusSaving, setInvoiceStatusSaving] = useState(false);
   const [queuingExpenseId, setQueuingExpenseId] = useState<string | null>(null);
   const [expenseResendChoice, setExpenseResendChoice] = useState<{ expense: Expense; existing: ExpenseWhatsAppQueue } | null>(null);
+  const [expenseWaPreview, setExpenseWaPreview] = useState<Expense | null>(null);
+  const [expenseWaPdf, setExpenseWaPdf] = useState<{ url: string | null; error: string | null; loading: boolean } | null>(null);
   const [bank, setBank] = useState<BankState>(() => readBankState());
   const [bankOpen, setBankOpen] = useState(false);
   const [bankHistoryOpen, setBankHistoryOpen] = useState(false);
@@ -419,8 +426,8 @@ function Fluxo() {
     return "Fatura de energia Usina";
   }
 
-  /** Coloca o boleto da despesa na fila para o grupo (o irmão paga). */
-  async function queueExpenseWhatsApp(e: Expense) {
+  /** Abre a prévia do boleto antes de colocar na fila (igual ao fechamento). */
+  function queueExpenseWhatsApp(e: Expense) {
     if (!e.attachment_path) return toast.error("Esta despesa não tem boleto anexado.");
     const existing = expenseWaByExpense.get(e.id);
     if (existing && (existing.status === "pending" || existing.status === "sent")) {
@@ -428,6 +435,14 @@ function Fluxo() {
       setExpenseResendChoice({ expense: e, existing });
       return;
     }
+    setExpenseWaPdf(null);
+    setExpenseWaPreview(e);
+  }
+
+  /** Confirma a prévia e coloca o boleto da despesa na fila para o grupo (o irmão paga). */
+  async function confirmExpenseWhatsApp() {
+    const e = expenseWaPreview;
+    if (!e || !e.attachment_path) return;
     if (queuingExpenseId) return;
     setQueuingExpenseId(e.id);
     try {
@@ -444,9 +459,24 @@ function Fluxo() {
         return toast.error(error.message);
       }
       toast.success("Boleto na fila para envio no grupo.");
+      setExpenseWaPreview(null);
       qc.invalidateQueries({ queryKey: ["fluxo-page"] });
     } finally {
       setQueuingExpenseId(null);
+    }
+  }
+
+  /** Abre o boleto (PDF) da prévia no visualizador. */
+  async function openExpenseWaPdf(e: Expense) {
+    if (!e.attachment_path) return;
+    if (expenseWaPdf?.url) URL.revokeObjectURL(expenseWaPdf.url);
+    setExpenseWaPdf({ url: null, error: null, loading: true });
+    try {
+      const blob = await fetchInvoicePdf(e.attachment_path);
+      const url = URL.createObjectURL(blob);
+      setExpenseWaPdf({ url, error: null, loading: false });
+    } catch (err) {
+      setExpenseWaPdf({ url: null, error: "Não foi possível carregar o PDF. " + ((err as Error)?.message || ""), loading: false });
     }
   }
 
@@ -1223,6 +1253,62 @@ function Fluxo() {
               {expenseResendChoice.existing.status === "sent" && (
                 <Button onClick={resendExpenseWhatsApp}>Enviar novamente</Button>
               )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {expenseWaPreview && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              if (expenseWaPdf?.url) URL.revokeObjectURL(expenseWaPdf.url);
+              setExpenseWaPdf(null);
+              setExpenseWaPreview(null);
+            }
+          }}
+        >
+          <DialogContent aria-describedby={undefined} className="max-h-[90vh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Prévia do que será enviado — confira antes de confirmar</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
+              <div className="text-sm font-bold text-foreground">{expenseWaPreview.description}</div>
+              <div className="text-sm text-muted-foreground">
+                {monthLabelFromISO(expenseWaPreview.reference_date)} · {brl(Number(expenseWaPreview.amount))}
+              </div>
+              <p className="whitespace-pre-line text-xs text-muted-foreground">{buildExpenseWhatsAppMessage(expenseWaPreview)}</p>
+              {expenseWaPreview.attachment_path ? (
+                expenseWaPdf?.url ? (
+                  <div className="space-y-2">
+                    <PdfViewer url={expenseWaPdf.url} />
+                    <a
+                      href={expenseWaPdf.url}
+                      download={expenseWaPreview.attachment_path.split("/").pop() || "boleto.pdf"}
+                      className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline"
+                    >
+                      <FileText className="h-4 w-4" /> Baixar boleto
+                    </a>
+                  </div>
+                ) : expenseWaPdf?.loading ? (
+                  <p className="text-sm text-muted-foreground">Carregando boleto…</p>
+                ) : expenseWaPdf?.error ? (
+                  <p className="text-sm text-red-500">{expenseWaPdf.error}</p>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => openExpenseWaPdf(expenseWaPreview)}>
+                    <FileText className="h-4 w-4" /> Ver boleto (PDF)
+                  </Button>
+                )
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setExpenseWaPreview(null)}>
+                Cancelar
+              </Button>
+              <Button onClick={confirmExpenseWhatsApp} disabled={queuingExpenseId === expenseWaPreview.id} className="gap-2">
+                {queuingExpenseId === expenseWaPreview.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                Confirmar envio
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
