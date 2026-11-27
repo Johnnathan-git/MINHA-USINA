@@ -429,6 +429,7 @@ function FaturasPage() {
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
+  const [waExpenseExpanded, setWaExpenseExpanded] = useState<string | null>(null);
   const [waTemplateOpen, setWaTemplateOpen] = useState(false);
   const [waTemplateDraft, setWaTemplateDraft] = useState("");
   const [waTemplateSaving, setWaTemplateSaving] = useState(false);
@@ -809,6 +810,15 @@ function FaturasPage() {
   const waSent = waRows.filter((w) => w.status === "sent").length;
   const waPending = waRows.filter((w) => w.status === "pending").length;
   const waFailed = waRows.filter((w) => w.status === "failed").length;
+  // Despesas do mês enviadas no grupo (fila expense_whatsapp_queue + despesa).
+  // Mesmo recorte da prévia de despesas: mês da reference_date e categoria "Fatura Usina".
+  const expenseById = new Map((data.expenses ?? []).map((e) => [e.id, e]));
+  const waExpenseRows = (data.expenseWaQueue ?? [])
+    .map((q) => ({ q, e: expenseById.get(q.expense_id) }))
+    .filter((r): r is { q: ExpenseWhatsAppQueue; e: Expense } => !!r.e && r.e.reference_date.slice(0, 7) === waMonth && r.e.category === "Fatura Usina");
+  const waExpenseSent = waExpenseRows.filter(({ q }) => q.status === "sent").length;
+  const waExpensePending = waExpenseRows.filter(({ q }) => q.status === "pending").length;
+  const waExpenseFailed = waExpenseRows.filter(({ q }) => q.status === "failed").length;
   // Selo de sessão do WhatsApp (gravado pelo remetente a cada 15 min).
   const waStatus = data.whatsappStatus ?? null;
   // Modelo da mensagem de fechamento (editável no diálogo "Editar mensagem").
@@ -1166,7 +1176,7 @@ function FaturasPage() {
             </Button>
             <Button variant="outline" onClick={() => setWaHistoryOpen(true)} className="gap-2">
               <History className="h-4 w-4" />
-              Histórico de envios{waRows.length > 0 ? ` (${waRows.length})` : ""}
+              Histórico de envios{waRows.length + waExpenseRows.length > 0 ? ` (${waRows.length + waExpenseRows.length})` : ""}
             </Button>
           </div>
         </div>
@@ -1264,11 +1274,12 @@ function FaturasPage() {
       </Card>
 
       {/* Histórico de envios do mês — abre por botão para a tela não encher. Toque em um cliente para conferir o que foi enviado. */}
-      <Dialog open={waHistoryOpen} onOpenChange={(o) => { setWaHistoryOpen(o); if (!o) setWaExpanded(null); }}>
+      <Dialog open={waHistoryOpen} onOpenChange={(o) => { setWaHistoryOpen(o); if (!o) { setWaExpanded(null); setWaExpenseExpanded(null); } }}>
         <DialogContent aria-describedby={undefined} className="glass-card border-border text-foreground max-h-[90vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Histórico de envios — {monthLabelFromISO(`${waMonth}-01`)}</DialogTitle>
           </DialogHeader>
+          <p className="text-sm font-bold text-foreground">Faturas</p>
           <p className="text-xs text-muted-foreground">
             {waSent} enviada(s) · {waPending} na fila · {waFailed} falhou(aram). Toque em um cliente para conferir a tabela, a mensagem e o anexo.
           </p>
@@ -1322,6 +1333,60 @@ function FaturasPage() {
                           <RefreshCw className="h-3.5 w-3.5" /> Reenviar
                         </Button>
                       ) : null}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-4 text-sm font-bold text-foreground">Despesas</p>
+          <p className="text-xs text-muted-foreground">
+            {waExpenseSent} enviada(s) · {waExpensePending} na fila · {waExpenseFailed} falhou(aram). Toque em uma despesa para conferir a mensagem e o boleto.
+          </p>
+          {waExpenseRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Nenhuma despesa enviada neste mês.</p>
+          ) : (
+            <ul className="space-y-2">
+              {waExpenseRows.map(({ q, e }) => (
+                <li key={q.id} className="rounded-lg border border-border bg-accent/40">
+                  <button
+                    onClick={() => setWaExpenseExpanded((v) => (v === q.id ? null : q.id))}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left"
+                  >
+                    <span className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-bold text-foreground">{buildExpenseWhatsAppMessage(e)}</span>
+                      <span className="text-muted-foreground">{brl(Number(e.amount))}</span>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                          q.status === "sent"
+                            ? "bg-emerald-500/15 text-emerald-600"
+                            : q.status === "failed"
+                              ? "bg-red-500/15 text-red-600"
+                              : "bg-amber-500/15 text-amber-600"
+                        }`}
+                      >
+                        {q.status === "sent" ? "Enviada" : q.status === "failed" ? "Falhou" : "Na fila"}
+                      </span>
+                      {q.sent_at ? (
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(q.sent_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      ) : null}
+                    </span>
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${waExpenseExpanded === q.id ? "rotate-180" : ""}`} />
+                  </button>
+                  {waExpenseExpanded === q.id ? (
+                    <div className="space-y-2 border-t border-border p-3">
+                      <p className="whitespace-pre-line break-words text-xs text-muted-foreground">{q.message_text}</p>
+                      {e.attachment_path ? (
+                        <Button variant="outline" size="sm" onClick={() => { if (e.attachment_path) void openWaPdf(`Boleto — ${buildExpenseWhatsAppMessage(e)}`, e.attachment_path); }} className="gap-1">
+                          <Paperclip className="h-3.5 w-3.5" />
+                          Ver boleto (PDF)
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Sem boleto anexado nesta despesa</p>
+                      )}
+                      {q.error ? <p className="text-xs text-red-500">{q.error}</p> : null}
                     </div>
                   ) : null}
                 </li>
