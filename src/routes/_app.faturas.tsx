@@ -139,6 +139,38 @@ type WhatsAppPreview = {
   attachment_path: string | null;
 };
 
+/** Despesa da usina (tabela expenses): só "Fatura Usina" com boleto vai ao grupo. */
+type Expense = {
+  id: string;
+  reference_date: string;
+  category: string;
+  description: string;
+  amount: number;
+  notes: string | null;
+  attachment_path?: string | null;
+};
+
+/** Envio de despesa no WhatsApp (tabela expense_whatsapp_queue). */
+type ExpenseWhatsAppQueue = {
+  id: string;
+  expense_id: string;
+  message_text: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+};
+
+/** Prévia do boleto antes de entrar na fila: o usuário analisa e confirma. */
+type ExpenseWhatsAppPreview = {
+  expense_id: string;
+  description: string;
+  reference_date: string;
+  amount: number;
+  message_text: string;
+  attachment_path: string;
+};
+
 /** Status de pagamento em notes: [[status:pendente]] — sem tag = pago */
 function invoicePaymentStatus(notes: string | null | undefined): "pago" | "pendente" {
   if (notes?.includes("[[status:pendente]]")) return "pendente";
@@ -188,7 +220,7 @@ function withPaymentTag(
 }
 
 async function fetchFaturasPage() {
-  const [c, i, p, w, cfg, s] = await Promise.all([
+  const [c, i, p, w, cfg, s, ew, exPrimary] = await Promise.all([
     supabase.from("clients").select("*").order("created_at", { ascending: true }),
     supabase.from("invoices").select("id,client_id,reference_date,attachment_url,notes"),
     supabase
@@ -203,9 +235,27 @@ async function fetchFaturasPage() {
       .limit(200),
     supabase.from("plant_config").select("pix_key, whatsapp_message_template").eq("id", 1).maybeSingle(),
     supabase.from("whatsapp_status").select("linked,checked_at,error").eq("id", 1).maybeSingle(),
+    supabase
+      .from("expense_whatsapp_queue")
+      .select("id,expense_id,message_text,status,error,created_at,sent_at")
+      .order("created_at", { ascending: false })
+      .limit(200),
+    // attachment_path só existe após aplicar a migration; sem ela, a página
+    // segue sem o botão de envio (mesmo cuidado da página Fluxo de Caixa).
+    supabase
+      .from("expenses")
+      .select("id,reference_date,category,description,amount,notes,attachment_path")
+      .order("reference_date", { ascending: false }),
   ]);
   if (c.error) throw new Error(c.error.message || "Erro ao carregar clientes");
   if (i.error) throw new Error(i.error.message || "Erro ao carregar faturas");
+  let ex: { data: (Omit<Expense, "attachment_path"> & { attachment_path?: string | null })[] | null; error: { message: string } | null } = exPrimary;
+  if (ex.error) {
+    ex = await supabase
+      .from("expenses")
+      .select("id,reference_date,category,description,amount,notes")
+      .order("reference_date", { ascending: false });
+  }
   return {
     clients: (c.data ?? []) as Client[],
     invoices: (i.data ?? []) as InvoiceRow[],
@@ -213,6 +263,9 @@ async function fetchFaturasPage() {
     pending: (p.error ? [] : (p.data ?? [])) as PendingImport[],
     // Idem para a fila do WhatsApp: sem a migration, a seção aparece vazia.
     whatsapp: (w.error ? [] : (w.data ?? [])) as WhatsAppQueue[],
+    // Idem para a fila de despesas e as despesas: sem a migration, a prévia de despesas aparece vazia.
+    expenseWaQueue: (ew.error ? [] : (ew.data ?? [])) as ExpenseWhatsAppQueue[],
+    expenses: (ex.error ? [] : (ex.data ?? []).map((x: any) => ({ ...x, attachment_path: x.attachment_path ?? null }))) as Expense[],
     // Chave Pix do fechamento (plant_config.pix_key); sem ela, a linha do Pix sai da mensagem.
     pixKey: (cfg.error ? null : (cfg.data?.pix_key ?? null)) as string | null,
     // Modelo da mensagem (plant_config.whatsapp_message_template); vazio = padrão do código.
@@ -366,6 +419,10 @@ function FaturasPage() {
   const [waSending, setWaSending] = useState(false);
   const [waPreview, setWaPreview] = useState<WhatsAppPreview[] | null>(null);
   const [waSelected, setWaSelected] = useState<Set<string>>(new Set());
+  const [expenseWaPreview, setExpenseWaPreview] = useState<ExpenseWhatsAppPreview[] | null>(null);
+  const [expenseWaSelected, setExpenseWaSelected] = useState<Set<string>>(new Set());
+  const [expenseWaSending, setExpenseWaSending] = useState(false);
+  const [expenseWaConfirming, setExpenseWaConfirming] = useState(false);
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
@@ -863,6 +920,85 @@ function FaturasPage() {
     }
   }
 
+  /** Legenda curta do boleto no grupo (o irmão paga a despesa). */
+  function buildExpenseWhatsAppMessage(e: { description: string }): string {
+    if (/internet/i.test(e.description)) return "Internet Usina";
+    if (/agua|água/i.test(e.description)) return "Fatura de agua Usina";
+    return "Fatura de energia Usina";
+  }
+
+  /** Monta a prévia das despesas do mês para o grupo (só "Fatura Usina" com boleto). */
+  function previewExpenseWhatsApp() {
+    if (!data || !/^\d{4}-\d{2}$/.test(waMonth)) return;
+    setExpenseWaSending(true);
+    try {
+      const already = new Set(
+        (data.expenseWaQueue ?? []).filter((q) => q.status === "pending" || q.status === "sent").map((q) => q.expense_id),
+      );
+      const rows: ExpenseWhatsAppPreview[] = [];
+      const skipped: string[] = [];
+      const noAttachment: string[] = [];
+      for (const e of data.expenses ?? []) {
+        if (e.reference_date.slice(0, 7) !== waMonth) continue;
+        if (e.category !== "Fatura Usina") continue;
+        if (!e.attachment_path) { noAttachment.push(e.description); continue; }
+        if (already.has(e.id)) { skipped.push(e.description); continue; }
+        rows.push({
+          expense_id: e.id,
+          description: e.description,
+          reference_date: e.reference_date,
+          amount: Number(e.amount),
+          message_text: buildExpenseWhatsAppMessage(e),
+          attachment_path: e.attachment_path,
+        });
+      }
+      if (rows.length === 0) {
+        toast.info("Nada novo para este mês.");
+      }
+      if (noAttachment.length > 0) toast.warning(`Sem boleto anexado: ${noAttachment.join(", ")}`);
+      if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
+      setExpenseWaPreview(rows);
+      setExpenseWaSelected(new Set(rows.map((r) => r.expense_id)));
+    } finally {
+      setExpenseWaSending(false);
+    }
+  }
+
+  /** Confirma a prévia e coloca os boletos na fila para o grupo (só os marcados). */
+  async function confirmExpenseWhatsApp() {
+    if (!expenseWaPreview || expenseWaPreview.length === 0) return;
+    const selected = expenseWaPreview.filter((p) => expenseWaSelected.has(p.expense_id));
+    if (selected.length === 0) {
+      toast.info("Selecione ao menos uma despesa para enviar.");
+      return;
+    }
+    setExpenseWaConfirming(true);
+    try {
+      const { error: insError } = await supabase.from("expense_whatsapp_queue").insert(
+        selected.map((p) => ({
+          expense_id: p.expense_id,
+          message_text: p.message_text,
+          attachment_path: p.attachment_path,
+          status: "pending",
+        })),
+      );
+      if (insError) {
+        if (/duplicate key/i.test(insError.message)) {
+          toast.error("Uma dessas despesas já está na fila ou já foi enviada ao grupo.");
+          return;
+        }
+        throw new Error(insError.message);
+      }
+      toast.success(`${selected.length} boleto(s) na fila para envio no grupo.`);
+      setExpenseWaPreview(null);
+      qc.invalidateQueries({ queryKey: ["faturas-page"] });
+    } catch (e) {
+      toast.error((e as Error)?.message || "Erro ao confirmar envio");
+    } finally {
+      setExpenseWaConfirming(false);
+    }
+  }
+
   /** Salva o modelo da mensagem de fechamento (vazio = volta ao padrão). */
   async function saveWaTemplate() {
     setWaTemplateSaving(true);
@@ -981,7 +1117,15 @@ function FaturasPage() {
               className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
             >
               {waSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Enviar fechamento
+              Enviar Faturas
+            </Button>
+            <Button
+              onClick={previewExpenseWhatsApp}
+              disabled={expenseWaSending}
+              className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg px-4 py-2 font-bold shadow-lg shadow-primary/20 transition-all active:scale-95"
+            >
+              {expenseWaSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Enviar Despesas
             </Button>
             <Button variant="outline" onClick={() => { setWaTemplateDraft(waTemplate ?? DEFAULT_WHATSAPP_TEMPLATE); setWaTemplateOpen(true); }} className="gap-2">
               <Pencil className="h-4 w-4" />
@@ -1033,6 +1177,48 @@ function FaturasPage() {
                 ) : (
                   <p className="text-xs text-muted-foreground">Sem PDF da fatura neste lançamento</p>
                 )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {expenseWaPreview !== null && expenseWaPreview.length > 0 ? (
+          <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-foreground">Prévia das despesas — confira antes de confirmar</h3>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setExpenseWaPreview(null)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" onClick={confirmExpenseWhatsApp} disabled={expenseWaConfirming} className="gap-2">
+                  {expenseWaConfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Confirmar envio ({expenseWaPreview.filter((p) => expenseWaSelected.has(p.expense_id)).length})
+                </Button>
+              </div>
+            </div>
+            {expenseWaPreview.map((p) => (
+              <div key={p.expense_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-foreground">
+                  <Checkbox
+                    checked={expenseWaSelected.has(p.expense_id)}
+                    onCheckedChange={(v) => {
+                      setExpenseWaSelected((prev) => {
+                        const next = new Set(prev);
+                        if (v) next.add(p.expense_id);
+                        else next.delete(p.expense_id);
+                        return next;
+                      });
+                    }}
+                  />
+                  Enviar — {p.description}
+                </label>
+                <div className="text-sm text-muted-foreground">
+                  {monthLabelFromISO(p.reference_date)} · {brl(p.amount)}
+                </div>
+                <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
+                <Button variant="outline" size="sm" onClick={() => openWaPdf(`Boleto — ${p.description}`, p.attachment_path)} className="gap-1">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Ver boleto (PDF)
+                </Button>
               </div>
             ))}
           </div>

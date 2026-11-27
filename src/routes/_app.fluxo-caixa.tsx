@@ -30,13 +30,8 @@ import {
   Landmark,
   History,
   Search,
-  FileText,
-  Loader2,
-  Send,
 } from "lucide-react";
-import { brl, monthLabel, monthLabelFromISO, EXPENSE_CATEGORIES, initial } from "@/lib/format";
-import { PdfViewer } from "@/components/PdfViewer";
-import { fetchInvoicePdf } from "@/lib/invoicePdf";
+import { brl, monthLabel, EXPENSE_CATEGORIES, initial } from "@/lib/format";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -319,10 +314,6 @@ function Fluxo() {
   const [edit, setEdit] = useState<Expense | null>(null);
   const [invoiceEdit, setInvoiceEdit] = useState<Invoice | null>(null);
   const [invoiceStatusSaving, setInvoiceStatusSaving] = useState(false);
-  const [queuingExpenseId, setQueuingExpenseId] = useState<string | null>(null);
-  const [expenseResendChoice, setExpenseResendChoice] = useState<{ expense: Expense; existing: ExpenseWhatsAppQueue } | null>(null);
-  const [expenseWaPreview, setExpenseWaPreview] = useState<Expense | null>(null);
-  const [expenseWaPdf, setExpenseWaPdf] = useState<{ url: string | null; error: string | null; loading: boolean } | null>(null);
   const [bank, setBank] = useState<BankState>(() => readBankState());
   const [bankOpen, setBankOpen] = useState(false);
   const [bankHistoryOpen, setBankHistoryOpen] = useState(false);
@@ -418,80 +409,6 @@ function Fluxo() {
     }
     return map;
   }, [data.expenseWaQueue]);
-
-  /** Legenda curta do boleto no grupo (o irmão paga a despesa). */
-  function buildExpenseWhatsAppMessage(e: Expense): string {
-    if (/internet/i.test(e.description)) return "Internet Usina";
-    if (/agua|água/i.test(e.description)) return "Fatura de agua Usina";
-    return "Fatura de energia Usina";
-  }
-
-  /** Abre a prévia do boleto antes de colocar na fila (igual ao fechamento). */
-  function queueExpenseWhatsApp(e: Expense) {
-    if (!e.attachment_path) return toast.error("Esta despesa não tem boleto anexado.");
-    const existing = expenseWaByExpense.get(e.id);
-    if (existing && (existing.status === "pending" || existing.status === "sent")) {
-      // Segundo clique / tela desatualizada: alerta em vez de duplicar o envio.
-      setExpenseResendChoice({ expense: e, existing });
-      return;
-    }
-    setExpenseWaPdf(null);
-    setExpenseWaPreview(e);
-  }
-
-  /** Confirma a prévia e coloca o boleto da despesa na fila para o grupo (o irmão paga). */
-  async function confirmExpenseWhatsApp() {
-    const e = expenseWaPreview;
-    if (!e || !e.attachment_path) return;
-    if (queuingExpenseId) return;
-    setQueuingExpenseId(e.id);
-    try {
-      const { error } = await supabase.from("expense_whatsapp_queue").insert({
-        expense_id: e.id,
-        message_text: buildExpenseWhatsAppMessage(e),
-        attachment_path: e.attachment_path,
-        status: "pending",
-      });
-      if (error) {
-        if (/duplicate key/i.test(error.message)) {
-          return toast.error("Essa despesa já está na fila ou já foi enviada ao grupo.");
-        }
-        return toast.error(error.message);
-      }
-      toast.success("Boleto na fila para envio no grupo.");
-      setExpenseWaPreview(null);
-      qc.invalidateQueries({ queryKey: ["fluxo-page"] });
-    } finally {
-      setQueuingExpenseId(null);
-    }
-  }
-
-  /** Abre o boleto (PDF) da prévia no visualizador. */
-  async function openExpenseWaPdf(e: Expense) {
-    if (!e.attachment_path) return;
-    if (expenseWaPdf?.url) URL.revokeObjectURL(expenseWaPdf.url);
-    setExpenseWaPdf({ url: null, error: null, loading: true });
-    try {
-      const blob = await fetchInvoicePdf(e.attachment_path);
-      const url = URL.createObjectURL(blob);
-      setExpenseWaPdf({ url, error: null, loading: false });
-    } catch (err) {
-      setExpenseWaPdf({ url: null, error: "Não foi possível carregar o PDF. " + ((err as Error)?.message || ""), loading: false });
-    }
-  }
-
-  /** Envia de novo uma despesa já enviada: volta a linha da fila para pendente (o remetente envia outra vez). */
-  async function resendExpenseWhatsApp() {
-    if (!expenseResendChoice) return;
-    const { error } = await supabase
-      .from("expense_whatsapp_queue")
-      .update({ status: "pending", error: null, sent_at: null })
-      .eq("id", expenseResendChoice.existing.id);
-    if (error) return toast.error(error.message);
-    toast.success("Despesa voltou para a fila para enviar de novo.");
-    setExpenseResendChoice(null);
-    qc.invalidateQueries({ queryKey: ["fluxo-page"] });
-  }
 
   /** Volta um envio que falhou para a fila. */
   async function retryExpenseWhatsApp(id: string) {
@@ -897,17 +814,7 @@ function Fluxo() {
                         >
                           Falhou — Reenviar
                         </button>
-                      ) : (
-                        <button
-                          onClick={() => queueExpenseWhatsApp(e)}
-                          disabled={queuingExpenseId === e.id}
-                          title="Enviar o boleto no grupo do WhatsApp para pagamento"
-                          className="flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] font-medium text-foreground hover:bg-accent disabled:opacity-50"
-                        >
-                          <img src="/whatsapp-logo.svg" alt="" className="h-3 w-3" />
-                          {queuingExpenseId === e.id ? "Enviando…" : "Enviar no grupo"}
-                        </button>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -1221,93 +1128,6 @@ function Fluxo() {
               <Button variant="outline" onClick={() => setBankOpen(false)}>Cancelar</Button>
               <Button onClick={saveBankAdjustment} disabled={bankSaving}>
                 {bankSaving ? "Salvando..." : "Confirmar saldo"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-      {expenseResendChoice && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setExpenseResendChoice(null);
-          }}
-        >
-          <DialogContent aria-describedby={undefined}>
-            <DialogHeader>
-              <DialogTitle>
-                {expenseResendChoice.existing.status === "sent"
-                  ? "Despesa já enviada ao grupo"
-                  : "Despesa já está na fila"}
-              </DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              {expenseResendChoice.existing.status === "sent"
-                ? `A despesa "${expenseResendChoice.expense.description}" (${brl(Number(expenseResendChoice.expense.amount))}) já foi enviada ao grupo. Quer enviar novamente?`
-                : `A despesa "${expenseResendChoice.expense.description}" (${brl(Number(expenseResendChoice.expense.amount))}) já está na fila para envio no grupo. Não é preciso enviar de novo.`}
-            </p>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setExpenseResendChoice(null)}>
-                {expenseResendChoice.existing.status === "sent" ? "Cancelar" : "Entendi"}
-              </Button>
-              {expenseResendChoice.existing.status === "sent" && (
-                <Button onClick={resendExpenseWhatsApp}>Enviar novamente</Button>
-              )}
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-      {expenseWaPreview && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) {
-              if (expenseWaPdf?.url) URL.revokeObjectURL(expenseWaPdf.url);
-              setExpenseWaPdf(null);
-              setExpenseWaPreview(null);
-            }
-          }}
-        >
-          <DialogContent aria-describedby={undefined} className="max-h-[90vh] max-w-2xl overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Prévia do que será enviado — confira antes de confirmar</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-2 rounded-lg border border-border bg-background p-3">
-              <div className="text-sm font-bold text-foreground">{expenseWaPreview.description}</div>
-              <div className="text-sm text-muted-foreground">
-                {monthLabelFromISO(expenseWaPreview.reference_date)} · {brl(Number(expenseWaPreview.amount))}
-              </div>
-              <p className="whitespace-pre-line text-xs text-muted-foreground">{buildExpenseWhatsAppMessage(expenseWaPreview)}</p>
-              {expenseWaPreview.attachment_path ? (
-                expenseWaPdf?.url ? (
-                  <div className="space-y-2">
-                    <PdfViewer url={expenseWaPdf.url} />
-                    <a
-                      href={expenseWaPdf.url}
-                      download={expenseWaPreview.attachment_path.split("/").pop() || "boleto.pdf"}
-                      className="inline-flex items-center gap-1 text-sm font-bold text-primary hover:underline"
-                    >
-                      <FileText className="h-4 w-4" /> Baixar boleto
-                    </a>
-                  </div>
-                ) : expenseWaPdf?.loading ? (
-                  <p className="text-sm text-muted-foreground">Carregando boleto…</p>
-                ) : expenseWaPdf?.error ? (
-                  <p className="text-sm text-red-500">{expenseWaPdf.error}</p>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={() => openExpenseWaPdf(expenseWaPreview)}>
-                    <FileText className="h-4 w-4" /> Ver boleto (PDF)
-                  </Button>
-                )
-              ) : null}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setExpenseWaPreview(null)}>
-                Cancelar
-              </Button>
-              <Button onClick={confirmExpenseWhatsApp} disabled={queuingExpenseId === expenseWaPreview.id} className="gap-2">
-                {queuingExpenseId === expenseWaPreview.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                Confirmar envio
               </Button>
             </DialogFooter>
           </DialogContent>
