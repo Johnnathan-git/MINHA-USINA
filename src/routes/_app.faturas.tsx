@@ -781,14 +781,14 @@ function FaturasPage() {
         (data.whatsapp ?? []).filter((w) => w.reference_month === waMonth).map((w) => w.client_id),
       );
       const rows: WhatsAppPreview[] = [];
-      const noPhone: string[] = [];
       const skipped: string[] = [];
       for (const inv of invs ?? []) {
         const c = data.clients.find((x) => x.id === inv.client_id);
         if (!c || !c.active) continue;
         if (already.has(c.id)) { skipped.push(c.name); continue; }
+        // Telefone não é obrigatório: no modo grupo o remetente envia para
+        // o grupo e ignora o telefone; a coluna aceita string vazia.
         const phone = (c.phone ?? "").trim();
-        if (!phone) { noPhone.push(c.name); continue; }
         rows.push({
           client_id: c.id,
           client_name: c.name,
@@ -820,7 +820,6 @@ function FaturasPage() {
       if (rows.length === 0) {
         toast.info("Nada novo para este mês.");
       }
-      if (noPhone.length > 0) toast.warning(`Sem telefone cadastrado: ${noPhone.join(", ")}`);
       if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
       setWaPreview(rows);
       setWaSelected(new Set(rows.map((r) => r.client_id)));

@@ -151,7 +151,6 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
           const waTemplate = (cfg?.whatsapp_message_template as string | null) ?? undefined
 
           const created: string[] = []
-          const skippedNoPhone: string[] = []
           const skippedAlready: string[] = []
           const skippedInactive: string[] = []
           for (const inv of invoices ?? []) {
@@ -159,8 +158,9 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
             if (!client) continue
             if (!client.active) { skippedInactive.push(client.name); continue }
             if (alreadyQueued.has(client.id)) { skippedAlready.push(client.name); continue }
+            // Telefone não é obrigatório: no modo grupo o remetente envia
+            // para o grupo e ignora o telefone; a coluna aceita string vazia.
             const phone = String(client.phone ?? '').trim()
-            if (!phone) { skippedNoPhone.push(client.name); continue }
             const due = String(inv.notes ?? '').match(/\[\[due:(\d{4}-\d{2}-\d{2})\]\]/)?.[1] ?? null
             const exact = String(inv.notes ?? '').match(/\[\[price_kw_exact:([^\]]+)\]\]/)?.[1] ?? null
             const messageText = buildWhatsAppMessage({
@@ -199,7 +199,6 @@ export const Route = createFileRoute('/api/whatsapp-queue')({
             status: 'prepared',
             reference_month: referenceMonth,
             created,
-            skipped_no_phone: skippedNoPhone,
             skipped_already_queued: skippedAlready,
             skipped_inactive: skippedInactive,
           })
