@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { PdfViewer } from "@/components/PdfViewer";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -364,6 +365,7 @@ function FaturasPage() {
   const [waMonth, setWaMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [waSending, setWaSending] = useState(false);
   const [waPreview, setWaPreview] = useState<WhatsAppPreview[] | null>(null);
+  const [waSelected, setWaSelected] = useState<Set<string>>(new Set());
   const [waConfirming, setWaConfirming] = useState(false);
   const [waHistoryOpen, setWaHistoryOpen] = useState(false);
   const [waExpanded, setWaExpanded] = useState<string | null>(null);
@@ -821,6 +823,7 @@ function FaturasPage() {
       if (noPhone.length > 0) toast.warning(`Sem telefone cadastrado: ${noPhone.join(", ")}`);
       if (skipped.length > 0) toast.info(`Já na fila: ${skipped.join(", ")}`);
       setWaPreview(rows);
+      setWaSelected(new Set(rows.map((r) => r.client_id)));
     } catch (e) {
       toast.error((e as Error)?.message || "Erro ao preparar mensagens");
     } finally {
@@ -828,13 +831,18 @@ function FaturasPage() {
     }
   }
 
-  /** Confirma a prévia e coloca as mensagens na fila de envio. */
+  /** Confirma a prévia e coloca as mensagens na fila de envio (só as marcadas). */
   async function confirmWhatsApp() {
     if (!waPreview || waPreview.length === 0) return;
+    const selected = waPreview.filter((p) => waSelected.has(p.client_id));
+    if (selected.length === 0) {
+      toast.info("Selecione ao menos um cliente para enviar.");
+      return;
+    }
     setWaConfirming(true);
     try {
       const { error: insError } = await supabase.from("whatsapp_queue").insert(
-        waPreview.map((p) => ({
+        selected.map((p) => ({
           client_id: p.client_id,
           client_name: p.client_name,
           phone: p.phone,
@@ -846,7 +854,7 @@ function FaturasPage() {
         })),
       );
       if (insError) throw new Error(insError.message);
-      toast.success(`${waPreview.length} mensagem(ns) na fila para envio.`);
+      toast.success(`${selected.length} mensagem(ns) na fila para envio.`);
       setWaPreview(null);
       qc.invalidateQueries({ queryKey: ["faturas-page"] });
     } catch (e) {
@@ -996,12 +1004,26 @@ function FaturasPage() {
                 </Button>
                 <Button size="sm" onClick={confirmWhatsApp} disabled={waConfirming} className="gap-2">
                   {waConfirming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                  Confirmar envio
+                  Confirmar envio ({waPreview.filter((p) => waSelected.has(p.client_id)).length})
                 </Button>
               </div>
             </div>
             {waPreview.map((p) => (
               <div key={p.client_id} className="space-y-2 rounded-lg border border-border bg-background p-3">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-foreground">
+                  <Checkbox
+                    checked={waSelected.has(p.client_id)}
+                    onCheckedChange={(v) => {
+                      setWaSelected((prev) => {
+                        const next = new Set(prev);
+                        if (v) next.add(p.client_id);
+                        else next.delete(p.client_id);
+                        return next;
+                      });
+                    }}
+                  />
+                  Enviar — {p.client_name}
+                </label>
                 <WaTablePreview clientName={p.client_name} tableData={p.table_data} />
                 <p className="whitespace-pre-line text-xs text-muted-foreground">{p.message_text}</p>
                 {p.attachment_path ? (
